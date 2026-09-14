@@ -1,0 +1,30 @@
+# Dependências
+node_modules/
+
+# Segredos e configuração local (nunca versionar)
+.env
+.env.*
+!.env.example
+
+# Builds e artefatos gerados
+dist/
+.next/
+out/
+backend/src/generated/
+*.tsbuildinfo
+next-env.d.ts
+
+# Arquivos enviados pelos usuários (evidências)
+backend/storage/
+
+# Testes e cobertura
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# Logs e sistema
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

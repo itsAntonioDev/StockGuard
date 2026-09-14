@@ -1,0 +1,779 @@
+// =============================================================================
+// StockGuard — modelo de dados
+//
+// Convenções:
+// - Tabelas em snake_case (@@map); colunas em camelCase.
+// - IDs UUID (não previsíveis); números sequenciais legíveis ("number") só para exibição.
+// - Registros críticos nunca são excluídos fisicamente.
+// - Restrições que o Prisma não expressa (CHECK, triggers, NULLS NOT DISTINCT,
+//   privilégios, função de saldo) ficam nas migrações SQL — veja docs/modelo-dados.md.
+// =============================================================================
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -----------------------------------------------------------------------------
+// Identidade, acesso e auditoria
+// -----------------------------------------------------------------------------
+
+model User {
+  id                  String    @id @default(uuid()) @db.Uuid
+  name                String    @db.VarChar(120)
+  email               String    @unique @db.VarChar(254)
+  passwordHash        String    @db.VarChar(255)
+  roleId              String    @db.Uuid
+  sectorId            String?   @db.Uuid
+  active              Boolean   @default(true)
+  mustChangePassword  Boolean   @default(true)
+  passwordChangedAt   DateTime  @default(now()) @db.Timestamptz(3)
+  failedLoginCount    Int       @default(0)
+  lockedUntil         DateTime? @db.Timestamptz(3)
+  lastLoginAt         DateTime? @db.Timestamptz(3)
+  mfaEnabled          Boolean   @default(false)
+  mfaSecretEnc        String?   @db.VarChar(255)
+  mfaPendingSecretEnc String?   @db.VarChar(255)
+  mfaLastUsedStep     Int?
+  /// Início do treinamento/função — contexto para indicadores, nunca critério de punição.
+  trainingStartedAt   DateTime? @db.Date
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
+  deactivatedAt       DateTime? @db.Timestamptz(3)
+
+  role   Role    @relation(fields: [roleId], references: [id])
+  sector Sector? @relation(fields: [sectorId], references: [id])
+
+  sessions                 Session[]
+  auditLogs                AuditLog[]
+  settingsUpdated          SystemSetting[]
+  movementsCreated         StockMovement[]      @relation("MovementCreatedBy")
+  movementsChecked         StockMovement[]      @relation("MovementCheckedBy")
+  movementsApproved        StockMovement[]      @relation("MovementApprovedBy")
+  movementsCancelled       StockMovement[]      @relation("MovementCancelledBy")
+  ledgerEntries            StockLedgerEntry[]
+  checkAttempts            CheckAttempt[]
+  inventoriesCreated       InventoryCount[]     @relation("InventoryCreatedBy")
+  inventoriesApproved      InventoryCount[]     @relation("InventoryApprovedBy")
+  inventoryItemsCounted    InventoryCountItem[]
+  discrepanciesReported    Discrepancy[]        @relation("DiscrepancyReportedBy")
+  discrepanciesOfOperation Discrepancy[]        @relation("DiscrepancyOperationUser")
+  discrepanciesAssigned    Discrepancy[]        @relation("DiscrepancyAssignedTo")
+  discrepancyActions       DiscrepancyAction[]
+  evidencesUploaded        DiscrepancyEvidence[]
+  alertsRelated            Alert[]              @relation("AlertRelatedUser")
+  alertsAcknowledged       Alert[]              @relation("AlertAcknowledgedBy")
+
+  @@index([roleId])
+  @@index([sectorId])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(40)
+  name        String   @db.VarChar(80)
+  description String?  @db.VarChar(300)
+  /// Perfis de sistema não podem ser excluídos nem ter o código alterado.
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique @db.VarChar(80)
+  module      String @db.VarChar(40)
+  description String @db.VarChar(200)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model Session {
+  id                String    @id @default(uuid()) @db.Uuid
+  /// SHA-256 do token. O token em si só existe no cookie HttpOnly do navegador.
+  tokenHash         String    @unique @db.Char(64)
+  userId            String    @db.Uuid
+  mfaVerified       Boolean   @default(false)
+  mfaFailedAttempts Int       @default(0)
+  ip                String?   @db.VarChar(45)
+  userAgent         String?   @db.VarChar(300)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  lastSeenAt        DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt         DateTime  @db.Timestamptz(3)
+  revokedAt         DateTime? @db.Timestamptz(3)
+  revokedReason     String?   @db.VarChar(40)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model SystemSetting {
+  key         String   @id @db.VarChar(80)
+  value       Json
+  updatedById String?  @db.Uuid
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("system_settings")
+}
+
+enum AuditResult {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+/// Somente inserção (UPDATE/DELETE bloqueados por privilégio e trigger).
+/// hash = HMAC-SHA256(chave, prevHash + conteúdo canônico) — encadeamento detecta adulteração.
+model AuditLog {
+  id         BigInt      @id @default(autoincrement())
+  createdAt  DateTime    @db.Timestamptz(3)
+  requestId  String?     @db.VarChar(64)
+  actorId    String?     @db.Uuid
+  action     String      @db.VarChar(80)
+  entityType String?     @db.VarChar(40)
+  entityId   String?     @db.VarChar(64)
+  result     AuditResult
+  ip         String?     @db.VarChar(45)
+  userAgent  String?     @db.VarChar(300)
+  metadata   Json?
+  prevHash   String?     @db.Char(64)
+  hash       String      @db.Char(64)
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// -----------------------------------------------------------------------------
+// Cadastros: produtos e endereços
+// -----------------------------------------------------------------------------
+
+enum UnitOfMeasure {
+  UN
+  CX
+  PCT
+  KG
+  G
+  L
+  ML
+  M
+}
+
+enum HandlingClass {
+  STANDARD
+  FRAGILE
+  HEAVY
+  PERISHABLE
+  CONTROLLED
+}
+
+model Category {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(80)
+  description String?  @db.VarChar(300)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id            String        @id @default(uuid()) @db.Uuid
+  internalCode  String        @unique @db.VarChar(40)
+  barcode       String?       @unique @db.VarChar(64)
+  name          String        @db.VarChar(160)
+  description   String?       @db.VarChar(1000)
+  categoryId    String?       @db.Uuid
+  unit          UnitOfMeasure
+  minStock      Decimal       @default(0) @db.Decimal(14, 3)
+  /// Custo unitário de referência para ESTIMAR o valor das divergências.
+  unitCost      Decimal?      @db.Decimal(14, 2)
+  tracksLot     Boolean       @default(false)
+  tracksExpiry  Boolean       @default(false)
+  handlingClass HandlingClass @default(STANDARD)
+  active        Boolean       @default(true)
+  createdAt     DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(3)
+
+  category            Category?            @relation(fields: [categoryId], references: [id])
+  lots                Lot[]
+  balances            StockBalance[]
+  movementItems       StockMovementItem[]
+  ledgerEntries       StockLedgerEntry[]
+  inventoryItems      InventoryCountItem[]
+  discrepancies       Discrepancy[]
+  alerts              Alert[]
+
+  @@index([name])
+  @@index([categoryId])
+  @@map("products")
+}
+
+model Lot {
+  id        String    @id @default(uuid()) @db.Uuid
+  productId String    @db.Uuid
+  code      String    @db.VarChar(60)
+  expiresAt DateTime? @db.Date
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  product        Product              @relation(fields: [productId], references: [id])
+  balances       StockBalance[]
+  movementItems  StockMovementItem[]
+  ledgerEntries  StockLedgerEntry[]
+  inventoryItems InventoryCountItem[]
+  discrepancies  Discrepancy[]
+
+  @@unique([productId, code])
+  @@map("lots")
+}
+
+model Warehouse {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique @db.VarChar(20)
+  name      String   @db.VarChar(120)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sectors     Sector[]
+  locations   Location[]
+  movements   StockMovement[]
+  inventories InventoryCount[]
+
+  @@map("warehouses")
+}
+
+model Sector {
+  id          String   @id @default(uuid()) @db.Uuid
+  warehouseId String   @db.Uuid
+  code        String   @db.VarChar(20)
+  name        String   @db.VarChar(120)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  warehouse   Warehouse        @relation(fields: [warehouseId], references: [id])
+  locations   Location[]
+  users       User[]
+  inventories InventoryCount[]
+
+  @@unique([warehouseId, code])
+  @@map("sectors")
+}
+
+enum LocationStatus {
+  ACTIVE
+  BLOCKED
+  INACTIVE
+}
+
+model Location {
+  id          String         @id @default(uuid()) @db.Uuid
+  warehouseId String         @db.Uuid
+  sectorId    String         @db.Uuid
+  /// Gerado pelo servidor: SETOR-CORREDOR-PRATELEIRA-POSIÇÃO (ex.: A-01-02-03).
+  code        String         @db.VarChar(40)
+  aisle       String         @db.VarChar(10)
+  shelf       String         @db.VarChar(10)
+  position    String         @db.VarChar(10)
+  /// Capacidade de referência (gera aviso, não bloqueio).
+  capacity    Decimal?       @db.Decimal(14, 3)
+  status      LocationStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(3)
+
+  warehouse          Warehouse            @relation(fields: [warehouseId], references: [id])
+  sector             Sector               @relation(fields: [sectorId], references: [id])
+  balances           StockBalance[]
+  itemsFrom          StockMovementItem[]  @relation("ItemFromLocation")
+  itemsTo            StockMovementItem[]  @relation("ItemToLocation")
+  ledgerEntries      StockLedgerEntry[]
+  inventoryItems     InventoryCountItem[]
+  discrepancies      Discrepancy[]
+  alerts             Alert[]
+
+  @@unique([warehouseId, code])
+  @@index([sectorId])
+  @@map("locations")
+}
+
+// -----------------------------------------------------------------------------
+// Estoque: saldo, movimentações e ledger
+// -----------------------------------------------------------------------------
+
+/// Cache do saldo por produto/endereço/lote. Só é alterado pela função
+/// sg_apply_stock_delta (que grava o ledger na mesma operação).
+model StockBalance {
+  id         String   @id @default(uuid()) @db.Uuid
+  productId  String   @db.Uuid
+  locationId String   @db.Uuid
+  lotId      String?  @db.Uuid
+  quantity   Decimal  @db.Decimal(14, 3)
+  version    Int      @default(0)
+  updatedAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  product  Product  @relation(fields: [productId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
+  lot      Lot?     @relation(fields: [lotId], references: [id])
+
+  @@unique([productId, locationId, lotId], map: "stock_balances_product_location_lot_key")
+  @@index([locationId])
+  @@map("stock_balances")
+}
+
+enum MovementType {
+  ENTRY
+  EXIT
+  PICKING
+  TRANSFER
+  ADJUSTMENT
+  INVENTORY
+}
+
+enum MovementStatus {
+  PENDING_CHECK
+  PENDING_APPROVAL
+  CONFIRMED
+  CANCELLED
+  REJECTED
+}
+
+model StockMovement {
+  id             String         @id @default(uuid()) @db.Uuid
+  number         Int            @unique @default(autoincrement())
+  type           MovementType
+  status         MovementStatus
+  warehouseId    String         @db.Uuid
+  reason         String?        @db.VarChar(500)
+  notes          String?        @db.VarChar(1000)
+  referenceDoc   String?        @db.VarChar(60)
+  /// Chave de idempotência enviada pelo cliente: impede movimentações duplicadas.
+  idempotencyKey String         @db.VarChar(100)
+  createdById    String         @db.Uuid
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  checkStartedAt DateTime?      @db.Timestamptz(3)
+  checkedById    String?        @db.Uuid
+  checkedAt      DateTime?      @db.Timestamptz(3)
+  approvedById   String?        @db.Uuid
+  approvedAt     DateTime?      @db.Timestamptz(3)
+  confirmedAt    DateTime?      @db.Timestamptz(3)
+  cancelledById  String?        @db.Uuid
+  cancelledAt    DateTime?      @db.Timestamptz(3)
+  cancelReason   String?        @db.VarChar(500)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  warehouse     Warehouse           @relation(fields: [warehouseId], references: [id])
+  createdBy     User                @relation("MovementCreatedBy", fields: [createdById], references: [id])
+  checkedBy     User?               @relation("MovementCheckedBy", fields: [checkedById], references: [id])
+  approvedBy    User?               @relation("MovementApprovedBy", fields: [approvedById], references: [id])
+  cancelledBy   User?               @relation("MovementCancelledBy", fields: [cancelledById], references: [id])
+  items         StockMovementItem[]
+  ledgerEntries StockLedgerEntry[]
+  checkAttempts CheckAttempt[]
+  discrepancies Discrepancy[]
+  inventory     InventoryCount?
+  alerts        Alert[]
+
+  @@unique([createdById, idempotencyKey])
+  @@index([status, type])
+  @@index([createdAt])
+  @@index([confirmedAt])
+  @@index([checkStartedAt])
+  @@index([warehouseId, createdAt])
+  @@map("stock_movements")
+}
+
+model StockMovementItem {
+  id               String        @id @default(uuid()) @db.Uuid
+  movementId       String        @db.Uuid
+  productId        String        @db.Uuid
+  lotId            String?       @db.Uuid
+  fromLocationId   String?       @db.Uuid
+  toLocationId     String?       @db.Uuid
+  /// Quantidade solicitada/esperada (sempre positiva).
+  expectedQuantity Decimal       @db.Decimal(14, 3)
+  /// Quantidade efetivamente confirmada.
+  quantity         Decimal?      @db.Decimal(14, 3)
+  /// Unidade no momento da operação (snapshot).
+  unit             UnitOfMeasure
+  /// Para ADJUSTMENT/INVENTORY: sinal do ajuste (+1 entrada, -1 saída).
+  direction        Int           @default(1)
+
+  movement      StockMovement      @relation(fields: [movementId], references: [id])
+  product       Product            @relation(fields: [productId], references: [id])
+  lot           Lot?               @relation(fields: [lotId], references: [id])
+  fromLocation  Location?          @relation("ItemFromLocation", fields: [fromLocationId], references: [id])
+  toLocation    Location?          @relation("ItemToLocation", fields: [toLocationId], references: [id])
+  ledgerEntries StockLedgerEntry[]
+  checkAttempts CheckAttempt[]
+  discrepancies Discrepancy[]
+
+  @@index([movementId])
+  @@index([productId])
+  @@index([fromLocationId])
+  @@index([toLocationId])
+  @@map("stock_movement_items")
+}
+
+/// Livro-razão do estoque — somente inserção. Fonte da verdade para reconciliação.
+model StockLedgerEntry {
+  id             BigInt   @id @default(autoincrement())
+  movementId     String   @db.Uuid
+  movementItemId String   @db.Uuid
+  productId      String   @db.Uuid
+  locationId     String   @db.Uuid
+  lotId          String?  @db.Uuid
+  delta          Decimal  @db.Decimal(14, 3)
+  balanceAfter   Decimal  @db.Decimal(14, 3)
+  createdById    String   @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  movement     StockMovement     @relation(fields: [movementId], references: [id])
+  movementItem StockMovementItem @relation(fields: [movementItemId], references: [id])
+  product      Product           @relation(fields: [productId], references: [id])
+  location     Location          @relation(fields: [locationId], references: [id])
+  lot          Lot?              @relation(fields: [lotId], references: [id])
+  createdBy    User              @relation(fields: [createdById], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([locationId, createdAt])
+  @@index([movementId])
+  @@map("stock_ledger_entries")
+}
+
+// -----------------------------------------------------------------------------
+// Conferência e inventário
+// -----------------------------------------------------------------------------
+
+enum CheckResult {
+  MATCH
+  MISMATCH
+}
+
+/// Cada tentativa de conferência (inclusive as erradas) — base para retrabalho e alertas.
+model CheckAttempt {
+  id                  String      @id @default(uuid()) @db.Uuid
+  movementId          String      @db.Uuid
+  movementItemId      String      @db.Uuid
+  userId              String      @db.Uuid
+  scannedLocationCode String?     @db.VarChar(40)
+  scannedProductCode  String?     @db.VarChar(64)
+  scannedLotCode      String?     @db.VarChar(60)
+  informedQuantity    Decimal?    @db.Decimal(14, 3)
+  result              CheckResult
+  /// Lista de códigos de erro (ex.: ["WRONG_PRODUCT","QUANTITY_MISMATCH"]).
+  errorCodes          Json
+  createdAt           DateTime    @default(now()) @db.Timestamptz(3)
+
+  movement     StockMovement     @relation(fields: [movementId], references: [id])
+  movementItem StockMovementItem @relation(fields: [movementItemId], references: [id])
+  user         User              @relation(fields: [userId], references: [id])
+
+  @@index([movementId])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("check_attempts")
+}
+
+enum InventoryStatus {
+  OPEN
+  SUBMITTED
+  APPROVED
+  CANCELLED
+}
+
+model InventoryCount {
+  id           String          @id @default(uuid()) @db.Uuid
+  number       Int             @unique @default(autoincrement())
+  warehouseId  String          @db.Uuid
+  sectorId     String?         @db.Uuid
+  /// Contagem cega: contadores não veem a quantidade do sistema.
+  blind        Boolean         @default(true)
+  status       InventoryStatus @default(OPEN)
+  notes        String?         @db.VarChar(1000)
+  createdById  String          @db.Uuid
+  createdAt    DateTime        @default(now()) @db.Timestamptz(3)
+  submittedAt  DateTime?       @db.Timestamptz(3)
+  approvedById String?         @db.Uuid
+  approvedAt   DateTime?       @db.Timestamptz(3)
+  cancelledAt  DateTime?       @db.Timestamptz(3)
+  movementId   String?         @unique @db.Uuid
+  updatedAt    DateTime        @updatedAt @db.Timestamptz(3)
+
+  warehouse  Warehouse            @relation(fields: [warehouseId], references: [id])
+  sector     Sector?              @relation(fields: [sectorId], references: [id])
+  createdBy  User                 @relation("InventoryCreatedBy", fields: [createdById], references: [id])
+  approvedBy User?                @relation("InventoryApprovedBy", fields: [approvedById], references: [id])
+  movement   StockMovement?       @relation(fields: [movementId], references: [id])
+  items      InventoryCountItem[]
+
+  @@index([status])
+  @@index([warehouseId, status])
+  @@map("inventory_counts")
+}
+
+model InventoryCountItem {
+  id               String    @id @default(uuid()) @db.Uuid
+  inventoryCountId String    @db.Uuid
+  locationId       String    @db.Uuid
+  productId        String    @db.Uuid
+  lotId            String?   @db.Uuid
+  /// Saldo do sistema no momento da abertura (endereços ficam bloqueados durante o inventário).
+  systemQuantity   Decimal   @db.Decimal(14, 3)
+  countedQuantity  Decimal?  @db.Decimal(14, 3)
+  recountQuantity  Decimal?  @db.Decimal(14, 3)
+  countedById      String?   @db.Uuid
+  countedAt        DateTime? @db.Timestamptz(3)
+
+  inventoryCount InventoryCount @relation(fields: [inventoryCountId], references: [id])
+  location       Location       @relation(fields: [locationId], references: [id])
+  product        Product        @relation(fields: [productId], references: [id])
+  lot            Lot?           @relation(fields: [lotId], references: [id])
+  countedBy      User?          @relation(fields: [countedById], references: [id])
+  discrepancies  Discrepancy[]
+
+  @@unique([inventoryCountId, locationId, productId, lotId], map: "inventory_count_items_unique_key")
+  @@map("inventory_count_items")
+}
+
+// -----------------------------------------------------------------------------
+// Divergências
+// -----------------------------------------------------------------------------
+
+enum DiscrepancyType {
+  WRONG_PRODUCT
+  QUANTITY_MISMATCH
+  WRONG_LOCATION
+  PRODUCT_NOT_FOUND
+  NEGATIVE_STOCK
+  DUPLICATE_PRODUCT
+  WRONG_LOT
+  WRONG_UNIT
+}
+
+enum DiscrepancyStatus {
+  OPEN
+  IN_ANALYSIS
+  CORRECTED
+  CONFIRMED
+  DISCARDED
+}
+
+enum DiscrepancyOrigin {
+  CHECK
+  INVENTORY
+  MANUAL
+}
+
+/// Causa provável definida por quem analisa. Nunca preenchida automaticamente.
+enum ProbableCause {
+  NOT_DETERMINED
+  PROCESS
+  TRAINING
+  LABELING
+  SYSTEM_DATA
+  SUPPLIER
+  PHYSICAL_LAYOUT
+  DAMAGE
+  LOSS
+  OTHER
+}
+
+model Discrepancy {
+  id                   String            @id @default(uuid()) @db.Uuid
+  number               Int               @unique @default(autoincrement())
+  type                 DiscrepancyType
+  status               DiscrepancyStatus @default(OPEN)
+  origin               DiscrepancyOrigin
+  productId            String?           @db.Uuid
+  lotId                String?           @db.Uuid
+  locationId           String?           @db.Uuid
+  movementId           String?           @db.Uuid
+  movementItemId       String?           @db.Uuid
+  inventoryCountItemId String?           @db.Uuid
+  expectedQuantity     Decimal?          @db.Decimal(14, 3)
+  foundQuantity        Decimal?          @db.Decimal(14, 3)
+  /// Valores lidos/informados que não correspondem ao esperado (podem não existir no cadastro).
+  expectedCode         String?           @db.VarChar(64)
+  foundCode            String?           @db.VarChar(64)
+  unitCostSnapshot     Decimal?          @db.Decimal(14, 2)
+  estimatedValue       Decimal?          @db.Decimal(14, 2)
+  description          String            @db.VarChar(2000)
+  reportedById         String            @db.Uuid
+  /// Usuário que executou a operação relacionada — contexto para análise, NÃO atribuição de culpa.
+  operationUserId      String?           @db.Uuid
+  assignedToId         String?           @db.Uuid
+  probableCause        ProbableCause     @default(NOT_DETERMINED)
+  correctiveAction     String?           @db.VarChar(2000)
+  createdAt            DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime          @updatedAt @db.Timestamptz(3)
+  analysisStartedAt    DateTime?         @db.Timestamptz(3)
+  resolvedAt           DateTime?         @db.Timestamptz(3)
+
+  product            Product?            @relation(fields: [productId], references: [id])
+  lot                Lot?                @relation(fields: [lotId], references: [id])
+  location           Location?           @relation(fields: [locationId], references: [id])
+  movement           StockMovement?      @relation(fields: [movementId], references: [id])
+  movementItem       StockMovementItem?  @relation(fields: [movementItemId], references: [id])
+  inventoryCountItem InventoryCountItem? @relation(fields: [inventoryCountItemId], references: [id])
+  reportedBy         User                @relation("DiscrepancyReportedBy", fields: [reportedById], references: [id])
+  operationUser      User?               @relation("DiscrepancyOperationUser", fields: [operationUserId], references: [id])
+  assignedTo         User?               @relation("DiscrepancyAssignedTo", fields: [assignedToId], references: [id])
+  actions            DiscrepancyAction[]
+  evidences          DiscrepancyEvidence[]
+  alerts             Alert[]
+
+  @@index([status, createdAt])
+  @@index([type])
+  @@index([productId, createdAt])
+  @@index([locationId])
+  @@index([movementId])
+  @@index([operationUserId])
+  @@index([reportedById])
+  @@map("discrepancies")
+}
+
+enum DiscrepancyActionKind {
+  CREATED
+  COMMENT
+  STATUS_CHANGE
+  ASSIGNMENT
+  CAUSE_UPDATE
+  EVIDENCE_ADDED
+}
+
+/// Histórico da divergência — somente inserção.
+model DiscrepancyAction {
+  id            String                @id @default(uuid()) @db.Uuid
+  discrepancyId String                @db.Uuid
+  userId        String                @db.Uuid
+  kind          DiscrepancyActionKind
+  fromStatus    DiscrepancyStatus?
+  toStatus      DiscrepancyStatus?
+  note          String?               @db.VarChar(2000)
+  createdAt     DateTime              @default(now()) @db.Timestamptz(3)
+
+  discrepancy Discrepancy @relation(fields: [discrepancyId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@index([discrepancyId, createdAt])
+  @@map("discrepancy_actions")
+}
+
+model DiscrepancyEvidence {
+  id            String   @id @default(uuid()) @db.Uuid
+  discrepancyId String   @db.Uuid
+  uploadedById  String   @db.Uuid
+  originalName  String   @db.VarChar(200)
+  mimeType      String   @db.VarChar(80)
+  sizeBytes     Int
+  sha256        String   @db.Char(64)
+  /// Nome aleatório no armazenamento (nunca derivado do nome enviado).
+  storageKey    String   @unique @db.VarChar(100)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  discrepancy Discrepancy @relation(fields: [discrepancyId], references: [id])
+  uploadedBy  User        @relation(fields: [uploadedById], references: [id])
+
+  @@index([discrepancyId])
+  @@map("discrepancy_evidences")
+}
+
+// -----------------------------------------------------------------------------
+// Alertas
+// -----------------------------------------------------------------------------
+
+enum AlertType {
+  LOW_STOCK
+  NEGATIVE_STOCK_ATTEMPT
+  WRONG_LOCATION
+  QUANTITY_MISMATCH
+  RECURRING_DISCREPANCY
+  PENDING_OPERATION
+  REPEATED_INVALID_ATTEMPTS
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model Alert {
+  id               String        @id @default(uuid()) @db.Uuid
+  type             AlertType
+  severity         AlertSeverity
+  status           AlertStatus   @default(OPEN)
+  title            String        @db.VarChar(160)
+  message          String        @db.VarChar(1000)
+  /// Chave lógica do alerta (ex.: LOW_STOCK:<produto>).
+  dedupeKey        String        @db.VarChar(200)
+  /// Igual a dedupeKey enquanto não resolvido; NULL depois. Garante um único alerta aberto por chave.
+  openDedupeKey    String?       @unique @db.VarChar(200)
+  occurrences      Int           @default(1)
+  productId        String?       @db.Uuid
+  locationId       String?       @db.Uuid
+  movementId       String?       @db.Uuid
+  discrepancyId    String?       @db.Uuid
+  relatedUserId    String?       @db.Uuid
+  acknowledgedById String?       @db.Uuid
+  acknowledgedAt   DateTime?     @db.Timestamptz(3)
+  resolvedAt       DateTime?     @db.Timestamptz(3)
+  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
+  lastOccurredAt   DateTime      @default(now()) @db.Timestamptz(3)
+
+  product        Product?       @relation(fields: [productId], references: [id])
+  location       Location?      @relation(fields: [locationId], references: [id])
+  movement       StockMovement? @relation(fields: [movementId], references: [id])
+  discrepancy    Discrepancy?   @relation(fields: [discrepancyId], references: [id])
+  relatedUser    User?          @relation("AlertRelatedUser", fields: [relatedUserId], references: [id])
+  acknowledgedBy User?          @relation("AlertAcknowledgedBy", fields: [acknowledgedById], references: [id])
+
+  @@index([status, severity, lastOccurredAt])
+  @@index([type, status])
+  @@map("alerts")
+}
