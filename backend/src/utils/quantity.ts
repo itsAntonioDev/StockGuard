@@ -6,6 +6,7 @@ import type { UnitOfMeasure } from '../generated/prisma/enums.js';
  * Quantidades trafegam como string decimal (até 3 casas) para não perder
  * precisão com ponto flutuante; cálculos usam Prisma.Decimal.
  */
+// eslint-disable-next-line security/detect-unsafe-regex -- quantificadores limitados, sem repetição aninhada (sem risco de ReDoS)
 const QUANTITY_PATTERN = /^\d{1,11}(\.\d{1,3})?$/u;
 
 /** Unidades que admitem fração (peso, volume, comprimento). */

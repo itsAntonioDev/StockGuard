@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs';
 import { defineConfig } from 'prisma/config';
 
 // O Prisma 7 não carrega .env automaticamente. Em produção as variáveis vêm do ambiente.
-if (existsSync('.env')) process.loadEnvFile('.env');
+// Se a URL já veio do ambiente (ex.: testes com .env.test), o .env de desenvolvimento é ignorado.
+if (!process.env.MIGRATION_DATABASE_URL && existsSync('.env')) process.loadEnvFile('.env');
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',

@@ -9,6 +9,8 @@ export interface CsvColumn<Row> {
 }
 
 const FORMULA_PREFIX = /^[=+\-@\t\r]/u;
+/** BOM para o Excel reconhecer UTF-8 (acentos). */
+const UTF8_BOM = String.fromCharCode(0xfeff);
 
 export function escapeCsvCell(raw: string | number | boolean | Date | null | undefined): string {
   if (raw === null || raw === undefined) return '';
@@ -27,5 +29,5 @@ export function toCsv<Row>(columns: CsvColumn<Row>[], rows: Row[]): string {
   for (const row of rows) {
     lines.push(columns.map((column) => escapeCsvCell(column.value(row))).join(';'));
   }
-  return `﻿${lines.join('\r\n')}\r\n`;
+  return `${UTF8_BOM}${lines.join('\r\n')}\r\n`;
 }

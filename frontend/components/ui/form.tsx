@@ -1,0 +1,63 @@
+import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { cn } from '@/lib/cn';
+
+const CONTROL = 'w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-none disabled:bg-neutral-100 disabled:text-neutral-500 aria-[invalid=true]:border-red-500';
+
+interface FieldProps {
+  label: string;
+  hint?: string;
+  error?: string | null;
+  required?: boolean;
+  className?: string;
+  children: (id: string) => ReactNode;
+}
+
+/** Rótulo, dica e erro associados ao controle (acessível por leitores de tela). */
+export function Field({ label, hint, error, required, className, children }: FieldProps) {
+  const id = useId();
+  return (
+    <div className={cn('flex flex-col gap-1.5', className)}>
+      <label htmlFor={id} className="text-sm font-medium text-neutral-800">
+        {label}
+        {required && <span className="ml-0.5 text-red-600" aria-hidden>*</span>}
+      </label>
+      {children(id)}
+      {hint && !error && <p className="text-xs text-neutral-500">{hint}</p>}
+      {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...props }, ref) {
+  return <input ref={ref} className={cn(CONTROL, 'h-10', className)} {...props} />;
+});
+
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...props }, ref) {
+  return (
+    <select ref={ref} className={cn(CONTROL, 'h-10 pr-8', className)} {...props}>
+      {children}
+    </select>
+  );
+});
+
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea({ className, ...props }, ref) {
+  return <textarea ref={ref} className={cn(CONTROL, 'min-h-24 py-2', className)} {...props} />;
+});
+
+interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
+  label: ReactNode;
+  description?: string;
+}
+
+export function Checkbox({ label, description, className, ...props }: CheckboxProps) {
+  const id = useId();
+  return (
+    <div className={cn('flex items-start gap-2', className)}>
+      <input id={id} type="checkbox" className="mt-0.5 size-4 rounded border-neutral-300 accent-neutral-900" {...props} />
+      <label htmlFor={id} className="text-sm text-neutral-800">
+        {label}
+        {description && <span className="block text-xs text-neutral-500">{description}</span>}
+      </label>
+    </div>
+  );
+}

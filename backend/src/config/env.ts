@@ -18,7 +18,20 @@ const envSchema = z
     PORT: z.coerce.number().int().min(1).max(65_535).default(3333),
     DATABASE_URL: z.string().startsWith('postgresql://'),
     FRONTEND_ORIGIN: z.url(),
-    TRUST_PROXY: bool('false'),
+    /**
+     * false | true | lista de IPs/CIDRs confiáveis (ex.: 127.0.0.1).
+     * Atrás do proxy do Next.js use 127.0.0.1: o IP real vem do X-Forwarded-For
+     * (necessário para rate limit por usuário), sem confiar em cabeçalhos de terceiros.
+     */
+    TRUST_PROXY: z
+      .string()
+      .default('false')
+      .transform((value): boolean | string[] => {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'false' || normalized === '') return false;
+        if (normalized === 'true') return true;
+        return normalized.split(',').map((entry) => entry.trim()).filter(Boolean);
+      }),
     COOKIE_SECURE: bool('true'),
     SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(12),
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(5).max(480).default(30),

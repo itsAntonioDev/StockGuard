@@ -4,6 +4,7 @@ import { getPrisma, Prisma, type DbClient } from '../lib/prisma.js';
 import { createDiscrepancyRecord } from '../repositories/discrepancy.repository.js';
 import { movementScopeWhere } from '../repositories/movement.repository.js';
 import type { Actor } from '../types/fastify.js';
+import { PROBABLE_CAUSE_LABEL } from '../utils/labels.js';
 import { toNumber } from '../utils/quantity.js';
 import type { RequestContext } from '../utils/request-context.js';
 import { skipTake, toPage } from '../validators/common.js';
@@ -218,19 +219,6 @@ export async function createDiscrepancy(actor: Actor, input: DiscrepancyCreateIn
 // Análise
 // ---------------------------------------------------------------------------
 
-const CAUSE_LABEL: Record<ProbableCause, string> = {
-  NOT_DETERMINED: 'Não determinada',
-  PROCESS: 'Processo',
-  TRAINING: 'Treinamento',
-  LABELING: 'Etiquetagem',
-  SYSTEM_DATA: 'Dados do sistema',
-  SUPPLIER: 'Fornecedor',
-  PHYSICAL_LAYOUT: 'Layout físico',
-  DAMAGE: 'Avaria',
-  LOSS: 'Perda/extravio',
-  OTHER: 'Outra',
-};
-
 export async function changeDiscrepancyStatus(actor: Actor, discrepancyId: string, input: DiscrepancyStatusChangeInput, context: RequestContext) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
@@ -255,7 +243,7 @@ export async function changeDiscrepancyStatus(actor: Actor, discrepancyId: strin
 
     const note = [
       input.note,
-      input.probableCause ? `Causa provável: ${CAUSE_LABEL[input.probableCause]}` : null,
+      input.probableCause ? `Causa provável: ${PROBABLE_CAUSE_LABEL[input.probableCause]}` : null,
       input.correctiveAction ? `Ação corretiva: ${input.correctiveAction}` : null,
     ]
       .filter(Boolean)

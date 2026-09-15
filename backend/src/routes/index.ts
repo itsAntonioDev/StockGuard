@@ -3,9 +3,11 @@ import { getPrisma } from '../lib/prisma.js';
 import type { App } from '../types/fastify.js';
 import { adminRoutes } from './admin.routes.js';
 import { alertRoutes } from './alert.routes.js';
-import { discrepancyRoutes } from './discrepancy.routes.js';
+import { analyticsRoutes } from './analytics.routes.js';
 import { authRoutes } from './auth.routes.js';
 import { catalogRoutes } from './catalog.routes.js';
+import { discrepancyRoutes } from './discrepancy.routes.js';
+import { inventoryRoutes } from './inventory.routes.js';
 import { locationRoutes } from './location.routes.js';
 import { movementRoutes } from './movement.routes.js';
 
@@ -36,4 +38,6 @@ export async function registerRoutes(app: App, options: RoutesOptions) {
   await movementRoutes(app);
   await discrepancyRoutes(app);
   await alertRoutes(app);
+  await inventoryRoutes(app);
+  await analyticsRoutes(app);
 }

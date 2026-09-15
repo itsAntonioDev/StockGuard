@@ -55,8 +55,11 @@ export async function storeEvidenceFile(buffer: Buffer): Promise<StoredFile> {
 
   const storageKey = `${randomBytes(16).toString('hex')}.${type.ext}`;
   const root = storageRoot();
+  // Caminhos seguros: diretório vem da configuração e o nome é aleatório, gerado pelo servidor.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- ver comentário acima
   await mkdir(root, { recursive: true });
   // 'wx' falha se o arquivo existir — nunca sobrescreve evidências.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- ver comentário acima
   await writeFile(path.join(root, storageKey), buffer, { flag: 'wx', mode: 0o600 });
 
   return {
@@ -71,6 +74,7 @@ export async function readEvidenceFile(storageKey: string): Promise<Buffer> {
   // A chave vem do banco, mas validamos o formato para impedir path traversal.
   if (!STORAGE_KEY_PATTERN.test(storageKey)) throw new NotFoundError('Arquivo não encontrado.');
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- storageKey validado pelo padrão acima
     return await readFile(path.join(storageRoot(), storageKey));
   } catch {
     throw new NotFoundError('Arquivo não encontrado.');

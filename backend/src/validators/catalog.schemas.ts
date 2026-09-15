@@ -7,6 +7,7 @@ export const handlingClassSchema = z.enum(['STANDARD', 'FRAGILE', 'HEAVY', 'PERI
 
 export const moneySchema = z.union([z.string(), z.number()]).transform((value, ctx) => {
   const text = typeof value === 'number' ? String(value) : value.trim().replace(',', '.');
+  // eslint-disable-next-line security/detect-unsafe-regex -- quantificadores limitados, sem repetição aninhada (sem risco de ReDoS)
   if (!/^\d{1,12}(\.\d{1,2})?$/u.test(text)) {
     ctx.addIssue({ code: 'custom', message: 'Valor monetário inválido (até 2 casas decimais).' });
     return z.NEVER;

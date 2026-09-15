@@ -103,7 +103,7 @@ function Write-EnvFile([string]$path, [string]$database, [bool]$isTest) {
     "DATABASE_URL=postgresql://stockguard_app:$appPw@${DbHost}:$Port/$database",
     "MIGRATION_DATABASE_URL=postgresql://stockguard_migrator:$migPw@${DbHost}:$Port/$database",
     "FRONTEND_ORIGIN=http://localhost:3000",
-    "TRUST_PROXY=false",
+    "TRUST_PROXY=127.0.0.1",
     "COOKIE_SECURE=false",
     "SESSION_TTL_HOURS=12",
     "SESSION_IDLE_MINUTES=30",
