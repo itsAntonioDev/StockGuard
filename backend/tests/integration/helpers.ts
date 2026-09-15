@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaPg } from '@prisma/adapter-pg';
 import type { InjectOptions, LightMyRequestResponse } from 'fastify';
 import { buildApp, type BuildAppOptions } from '../../src/app.js';
 import { encryptSecret } from '../../src/auth/crypto.js';
@@ -7,8 +6,9 @@ import { hashPassword } from '../../src/auth/password.js';
 import type { RoleCode } from '../../src/auth/permissions.js';
 import { base32Decode, generateTotpSecret, hotp, totpStep } from '../../src/auth/totp.js';
 import { getEnv } from '../../src/config/env.js';
-import { PrismaClient } from '../../src/generated/prisma/client.js';
-import { disconnectPrisma, getPrisma } from '../../src/lib/prisma.js';
+import type { PrismaClient } from '../../src/generated/prisma/client.js';
+import { createDatabase, disconnectPrisma, getPrisma, type Database } from '../../src/lib/prisma.js';
+import { isTestDatabase } from './global-setup.js';
 import { syncPermissionsAndRoles } from '../../src/services/bootstrap.service.js';
 import { sessionCookieName } from '../../src/services/session.service.js';
 
@@ -21,18 +21,18 @@ export async function buildTestApp(options: BuildAppOptions = {}): Promise<TestA
   return app;
 }
 
-let migrator: PrismaClient | undefined;
+let migrator: Database | undefined;
 
 /** Cliente com o papel dono do schema — usado apenas para limpar o banco de teste. */
 export function migratorClient(): PrismaClient {
-  migrator ??= new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.MIGRATION_DATABASE_URL! }) });
-  return migrator;
+  migrator ??= createDatabase(process.env.MIGRATION_DATABASE_URL!);
+  return migrator.prisma;
 }
 
 export async function closeAll(app?: TestApp) {
   await app?.close();
   await disconnectPrisma();
-  await migrator?.$disconnect();
+  await migrator?.close();
   migrator = undefined;
 }
 
@@ -45,7 +45,7 @@ const TABLES = [
 ];
 
 export async function resetDatabase() {
-  if (!process.env.MIGRATION_DATABASE_URL?.includes('/stockguard_test')) {
+  if (!isTestDatabase()) {
     throw new Error('resetDatabase recusado: não é o banco de teste.');
   }
   // TRUNCATE não dispara os triggers de linha (append-only); só o dono das tabelas pode executá-lo.

@@ -1,8 +1,8 @@
-import { getEnv } from '../config/env.js';
 import { getPrisma, Prisma } from '../lib/prisma.js';
 import { DISCREPANCY_TYPE_LABEL } from '../utils/labels.js';
 import type { DashboardQuery, ReportSummaryQuery } from '../validators/analytics.schemas.js';
 import { countOpenAlerts } from './alert.service.js';
+import { getTimezone } from './settings.service.js';
 import {
   discrepancyRate,
   percentChange,
@@ -140,7 +140,7 @@ async function topSectors(period: Period, scope: Scope) {
 
 /** Série temporal com todos os intervalos (inclusive os sem ocorrências), no fuso da empresa. */
 async function timeSeries(period: Period, scope: Scope, granularity: DashboardQuery['granularity']) {
-  const tz = getEnv().APP_TIMEZONE;
+  const tz = await getTimezone();
   const rows = await getPrisma().$queryRaw<Array<{ bucket: string; movements: bigint; analyzed: bigint; withDiscrepancy: bigint; discrepancies: bigint }>>`
     WITH buckets AS (
       SELECT generate_series(

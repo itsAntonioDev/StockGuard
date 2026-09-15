@@ -33,6 +33,8 @@ export async function adminRoutes(app: App) {
 
   const settingTags = ['Configurações'];
   app.get('/settings', { config: { permissions: ['settings.manage'] }, schema: { tags: settingTags } }, controller.listSettings);
+  // Preferências de exibição (nome da empresa, fuso, formatos): qualquer usuário autenticado.
+  app.get('/settings/general', { config: { permissions: [] }, schema: { tags: settingTags } }, controller.generalSettings);
   app.put('/settings/:key', {
     config: { permissions: ['settings.manage'] },
     schema: { tags: settingTags, params: settingKeyParamSchema, body: settingUpdateSchema },

@@ -1,7 +1,7 @@
-import { getEnv } from '../config/env.js';
 import { BusinessRuleError } from '../lib/errors.js';
 import { getPrisma, Prisma } from '../lib/prisma.js';
 import { productIdsBelowMinimum, stockTotalsByProduct } from '../repositories/product.repository.js';
+import type { Actor } from '../types/fastify.js';
 import type { CsvColumn } from '../utils/csv.js';
 import {
   DISCREPANCY_ORIGIN_LABEL,
@@ -12,14 +12,15 @@ import {
   PROBABLE_CAUSE_LABEL,
 } from '../utils/labels.js';
 import { toNumber } from '../utils/quantity.js';
-import type { DiscrepancyReportQuery, MovementReportQuery, StockReportQuery } from '../validators/analytics.schemas.js';
+import type { DiscrepancyReportQuery, MovementReportQuery, ProductivityReportQuery, StockReportQuery } from '../validators/analytics.schemas.js';
 import { skipTake, toPage } from '../validators/common.js';
 import { resolvePeriod } from './analytics-period.js';
+import { getProductivity } from './productivity.service.js';
 
 /**
  * Relatórios: a mesma definição (linhas + colunas) alimenta a resposta JSON
  * paginada e a exportação CSV. Um renderizador PDF futuro pode reutilizar
- * `columns` e `fetchAll` sem duplicar consultas — veja docs/integracoes.md.
+ * `columns` e as funções de busca sem duplicar consultas — veja docs/integracoes.md.
  */
 export const REPORT_MAX_ROWS = 50_000;
 
@@ -29,16 +30,10 @@ export interface ReportDefinition<Row> {
   columns: CsvColumn<Row>[];
 }
 
-function dateTime(value: Date | null | undefined): string {
-  if (!value) return '';
-  return new Intl.DateTimeFormat('pt-BR', {
-    timeZone: getEnv().APP_TIMEZONE,
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(value);
+/** Datas exportadas no fuso configurado da empresa. */
+export function dateTimeFormatter(timeZone: string) {
+  const format = new Intl.DateTimeFormat('pt-BR', { timeZone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return (value: Date | null | undefined) => (value ? format.format(value) : '');
 }
 
 function assertExportable(total: number) {
@@ -102,28 +97,31 @@ function presentMovementRow(row: MovementItemRow) {
 
 export type MovementReportRow = ReturnType<typeof presentMovementRow>;
 
-export const movementReport: ReportDefinition<MovementReportRow> = {
-  key: 'movimentacoes',
-  title: 'Movimentações de estoque',
-  columns: [
-    { header: 'Nº', value: (r) => r.number },
-    { header: 'Tipo', value: (r) => r.type },
-    { header: 'Status', value: (r) => r.status },
-    { header: 'Criada em', value: (r) => dateTime(r.createdAt) },
-    { header: 'Confirmada em', value: (r) => dateTime(r.confirmedAt) },
-    { header: 'Código do produto', value: (r) => r.productCode },
-    { header: 'Produto', value: (r) => r.productName },
-    { header: 'Lote', value: (r) => r.lot },
-    { header: 'Qtd. solicitada', value: (r) => r.expectedQuantity },
-    { header: 'Qtd. confirmada', value: (r) => r.confirmedQuantity },
-    { header: 'Unidade', value: (r) => r.unit },
-    { header: 'Origem', value: (r) => r.from },
-    { header: 'Destino', value: (r) => r.to },
-    { header: 'Registrado por', value: (r) => r.createdBy },
-    { header: 'Conferido por', value: (r) => r.checkedBy },
-    { header: 'Documento', value: (r) => r.referenceDoc },
-  ],
-};
+export function movementReport(timeZone: string): ReportDefinition<MovementReportRow> {
+  const dateTime = dateTimeFormatter(timeZone);
+  return {
+    key: 'movimentacoes',
+    title: 'Movimentações de estoque',
+    columns: [
+      { header: 'Nº', value: (r) => r.number },
+      { header: 'Tipo', value: (r) => r.type },
+      { header: 'Status', value: (r) => r.status },
+      { header: 'Criada em', value: (r) => dateTime(r.createdAt) },
+      { header: 'Confirmada em', value: (r) => dateTime(r.confirmedAt) },
+      { header: 'Código do produto', value: (r) => r.productCode },
+      { header: 'Produto', value: (r) => r.productName },
+      { header: 'Lote', value: (r) => r.lot },
+      { header: 'Qtd. solicitada', value: (r) => r.expectedQuantity },
+      { header: 'Qtd. confirmada', value: (r) => r.confirmedQuantity },
+      { header: 'Unidade', value: (r) => r.unit },
+      { header: 'Origem', value: (r) => r.from },
+      { header: 'Destino', value: (r) => r.to },
+      { header: 'Registrado por', value: (r) => r.createdBy },
+      { header: 'Conferido por', value: (r) => r.checkedBy },
+      { header: 'Documento', value: (r) => r.referenceDoc },
+    ],
+  };
+}
 
 function movementWhere(query: MovementReportQuery): Prisma.StockMovementItemWhereInput {
   const period = resolvePeriod(query.from, query.to);
@@ -208,31 +206,34 @@ function presentDiscrepancyRow(row: DiscrepancyRow) {
 
 export type DiscrepancyReportRow = ReturnType<typeof presentDiscrepancyRow>;
 
-export const discrepancyReport: ReportDefinition<DiscrepancyReportRow> = {
-  key: 'divergencias',
-  title: 'Divergências de estoque',
-  columns: [
-    { header: 'Nº', value: (r) => r.number },
-    { header: 'Tipo', value: (r) => r.type },
-    { header: 'Status', value: (r) => r.status },
-    { header: 'Origem', value: (r) => r.origin },
-    { header: 'Registrada em', value: (r) => dateTime(r.createdAt) },
-    { header: 'Resolvida em', value: (r) => dateTime(r.resolvedAt) },
-    { header: 'Código do produto', value: (r) => r.productCode },
-    { header: 'Produto', value: (r) => r.productName },
-    { header: 'Endereço', value: (r) => r.location },
-    { header: 'Setor', value: (r) => r.sector },
-    { header: 'Qtd. esperada', value: (r) => r.expectedQuantity },
-    { header: 'Qtd. encontrada', value: (r) => r.foundQuantity },
-    { header: 'Valor estimado (R$)', value: (r) => r.estimatedValue },
-    { header: 'Causa provável', value: (r) => r.probableCause },
-    { header: 'Registrada por', value: (r) => r.reportedBy },
-    // Contexto para análise de processo — não indica responsabilidade pelo erro.
-    { header: 'Executante da operação (contexto)', value: (r) => r.operationUser },
-    { header: 'Responsável pela análise', value: (r) => r.assignedTo },
-    { header: 'Ação corretiva', value: (r) => r.correctiveAction },
-  ],
-};
+export function discrepancyReport(timeZone: string): ReportDefinition<DiscrepancyReportRow> {
+  const dateTime = dateTimeFormatter(timeZone);
+  return {
+    key: 'divergencias',
+    title: 'Divergências de estoque',
+    columns: [
+      { header: 'Nº', value: (r) => r.number },
+      { header: 'Tipo', value: (r) => r.type },
+      { header: 'Status', value: (r) => r.status },
+      { header: 'Origem', value: (r) => r.origin },
+      { header: 'Registrada em', value: (r) => dateTime(r.createdAt) },
+      { header: 'Resolvida em', value: (r) => dateTime(r.resolvedAt) },
+      { header: 'Código do produto', value: (r) => r.productCode },
+      { header: 'Produto', value: (r) => r.productName },
+      { header: 'Endereço', value: (r) => r.location },
+      { header: 'Setor', value: (r) => r.sector },
+      { header: 'Qtd. esperada', value: (r) => r.expectedQuantity },
+      { header: 'Qtd. encontrada', value: (r) => r.foundQuantity },
+      { header: 'Valor estimado (R$)', value: (r) => r.estimatedValue },
+      { header: 'Causa provável', value: (r) => r.probableCause },
+      { header: 'Registrada por', value: (r) => r.reportedBy },
+      // Contexto para análise de processo — não indica responsabilidade pelo erro.
+      { header: 'Executante da operação (contexto)', value: (r) => r.operationUser },
+      { header: 'Responsável pela análise', value: (r) => r.assignedTo },
+      { header: 'Ação corretiva', value: (r) => r.correctiveAction },
+    ],
+  };
+}
 
 function discrepancyWhere(query: DiscrepancyReportQuery): Prisma.DiscrepancyWhereInput {
   const period = resolvePeriod(query.from, query.to);
@@ -298,25 +299,28 @@ function presentBalanceRow(row: BalanceRow, totals: Map<string, Prisma.Decimal>)
 
 export type StockReportRow = ReturnType<typeof presentBalanceRow>;
 
-export const stockReport: ReportDefinition<StockReportRow> = {
-  key: 'estoque-atual',
-  title: 'Estoque atual por endereço',
-  columns: [
-    { header: 'Código do produto', value: (r) => r.productCode },
-    { header: 'Produto', value: (r) => r.productName },
-    { header: 'Categoria', value: (r) => r.category },
-    { header: 'Endereço', value: (r) => r.location },
-    { header: 'Setor', value: (r) => r.sector },
-    { header: 'Lote', value: (r) => r.lot },
-    { header: 'Validade', value: (r) => (r.expiresAt ? r.expiresAt.toISOString().slice(0, 10) : null) },
-    { header: 'Quantidade no endereço', value: (r) => r.quantity },
-    { header: 'Unidade', value: (r) => r.unit },
-    { header: 'Saldo total do produto', value: (r) => r.productTotal },
-    { header: 'Estoque mínimo', value: (r) => r.minStock },
-    { header: 'Abaixo do mínimo', value: (r) => (r.belowMinimum ? 'Sim' : 'Não') },
-    { header: 'Atualizado em', value: (r) => dateTime(r.updatedAt) },
-  ],
-};
+export function stockReport(timeZone: string): ReportDefinition<StockReportRow> {
+  const dateTime = dateTimeFormatter(timeZone);
+  return {
+    key: 'estoque-atual',
+    title: 'Estoque atual por endereço',
+    columns: [
+      { header: 'Código do produto', value: (r) => r.productCode },
+      { header: 'Produto', value: (r) => r.productName },
+      { header: 'Categoria', value: (r) => r.category },
+      { header: 'Endereço', value: (r) => r.location },
+      { header: 'Setor', value: (r) => r.sector },
+      { header: 'Lote', value: (r) => r.lot },
+      { header: 'Validade', value: (r) => (r.expiresAt ? r.expiresAt.toISOString().slice(0, 10) : null) },
+      { header: 'Quantidade no endereço', value: (r) => r.quantity },
+      { header: 'Unidade', value: (r) => r.unit },
+      { header: 'Saldo total do produto', value: (r) => r.productTotal },
+      { header: 'Estoque mínimo', value: (r) => r.minStock },
+      { header: 'Abaixo do mínimo', value: (r) => (r.belowMinimum ? 'Sim' : 'Não') },
+      { header: 'Atualizado em', value: (r) => dateTime(r.updatedAt) },
+    ],
+  };
+}
 
 export async function fetchStockReport(query: StockReportQuery, all: boolean) {
   const prisma = getPrisma();
@@ -343,4 +347,66 @@ export async function fetchStockReport(query: StockReportQuery, all: boolean) {
   });
   const totals = await stockTotalsByProduct(prisma, [...new Set(rows.map((row) => row.product.id))]);
   return toPage(rows.map((row) => presentBalanceRow(row, totals)), total, query.page, all ? Math.max(total, 1) : query.pageSize);
+}
+
+// ---------------------------------------------------------------------------
+// Produtividade (agregada por tipo de operação e setor — nunca por pessoa)
+// ---------------------------------------------------------------------------
+
+export interface ProductivityReportRow {
+  grouping: string;
+  group: string;
+  volume: number;
+  sufficientSample: boolean;
+  averageMinutes: number | null;
+  averageMinutesPerItem: number | null;
+  accuracy: number | null;
+  rework: number | null;
+  resolutionHours: number | null;
+}
+
+export const productivityReport: ReportDefinition<ProductivityReportRow> = {
+  key: 'produtividade',
+  title: 'Produtividade da operação',
+  columns: [
+    { header: 'Agrupamento', value: (r) => r.grouping },
+    { header: 'Grupo', value: (r) => r.group },
+    { header: 'Volume (operações ou leituras)', value: (r) => r.volume },
+    { header: 'Amostra suficiente', value: (r) => (r.sufficientSample ? 'Sim' : 'Não') },
+    { header: 'Minutos por operação', value: (r) => r.averageMinutes },
+    { header: 'Minutos por item', value: (r) => r.averageMinutesPerItem },
+    { header: 'Precisão (%)', value: (r) => r.accuracy },
+    { header: 'Retrabalho por operação', value: (r) => r.rework },
+    { header: 'Tempo médio de resolução (h)', value: (r) => r.resolutionHours },
+  ],
+};
+
+export async function fetchProductivityReport(actor: Actor, query: ProductivityReportQuery) {
+  // Sem userId: visão da operação inteira (quem não tem visão total recebe apenas os próprios dados).
+  const data = await getProductivity(actor, { from: query.from, to: query.to, warehouseId: query.warehouseId, sectorId: query.sectorId });
+  const rows: ProductivityReportRow[] = [
+    ...data.byOperationType.map((entry) => ({
+      grouping: 'Tipo de operação',
+      group: entry.label,
+      volume: entry.operations,
+      sufficientSample: entry.sufficientSample,
+      averageMinutes: entry.averageMinutes,
+      averageMinutesPerItem: entry.averageMinutesPerItem,
+      accuracy: entry.firstPassAccuracy,
+      rework: entry.reworkPerOperation,
+      resolutionHours: null,
+    })),
+    ...data.bySector.map((entry) => ({
+      grouping: 'Setor',
+      group: `${entry.sector.code} — ${entry.sector.name}`,
+      volume: entry.attempts,
+      sufficientSample: entry.sufficientSample,
+      averageMinutes: null,
+      averageMinutesPerItem: null,
+      accuracy: entry.attemptAccuracy,
+      rework: null,
+      resolutionHours: entry.averageResolutionHours,
+    })),
+  ];
+  return toPage(rows, rows.length, 1, Math.max(rows.length, 1));
 }

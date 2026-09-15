@@ -13,7 +13,7 @@ import {
   type MovementDetail,
 } from '../repositories/movement.repository.js';
 import type { Actor } from '../types/fastify.js';
-import { decimal, isQuantityCompatibleWithUnit } from '../utils/quantity.js';
+import { decimal, isQuantityCompatibleWithUnit, toNumber } from '../utils/quantity.js';
 import type { RequestContext } from '../utils/request-context.js';
 import { skipTake, toPage } from '../validators/common.js';
 import type { MovementCreateInput, MovementListQuery } from '../validators/movement.schemas.js';
@@ -56,10 +56,14 @@ export async function listMovements(actor: Actor, query: MovementListQuery) {
       : {}),
   };
   const where: Prisma.StockMovementWhereInput = { AND: [filters, movementScopeWhere(actor)] };
-  const [total, items] = await Promise.all([
+  const [total, rows] = await Promise.all([
     prisma.stockMovement.count({ where }),
     prisma.stockMovement.findMany({ where, select: movementListSelect, orderBy: { createdAt: 'desc' }, ...skipTake(query.page, query.pageSize) }),
   ]);
+  const items = rows.map((row) => ({
+    ...row,
+    items: row.items.map((item) => ({ ...item, expectedQuantity: toNumber(item.expectedQuantity)!, quantity: toNumber(item.quantity) })),
+  }));
   return toPage(items, total, query.page, query.pageSize);
 }
 

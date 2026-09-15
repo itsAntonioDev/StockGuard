@@ -52,6 +52,8 @@ export const updateRolePermissions = (request: FastifyRequest<IdParams & { Body:
 // Configurações
 export const listSettings = async () => ({ items: await settingsService.listSettings() });
 
+export const generalSettings = () => settingsService.getGeneralSettings();
+
 export const updateSetting = (request: FastifyRequest<{ Params: { key: string }; Body: { value?: unknown } }>) =>
   settingsService.updateSetting(request.params.key, request.body.value, getActor(request).userId, requestContext(request));
 

@@ -60,6 +60,10 @@ export const stockReportQuerySchema = paginationSchema.extend({
   belowMinimum: z.enum(['true', 'false']).optional(),
 });
 
+/** Produtividade agregada (por tipo de operação e setor) — nunca por pessoa. */
+export const productivityReportQuerySchema = z.object({ ...period, ...scope, format: formatSchema });
+
+export type ProductivityReportQuery = z.infer<typeof productivityReportQuerySchema>;
 export type DashboardQuery = z.infer<typeof dashboardQuerySchema>;
 export type ProductivityQuery = z.infer<typeof productivityQuerySchema>;
 export type ReportSummaryQuery = z.infer<typeof reportSummaryQuerySchema>;

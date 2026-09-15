@@ -152,7 +152,6 @@ CREATE OR REPLACE FUNCTION sg_apply_stock_delta(
 ) RETURNS numeric
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_item  record;
@@ -220,6 +219,16 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION sg_apply_stock_delta(uuid, uuid, numeric, uuid) FROM PUBLIC;
+
+-- search_path fixo no schema onde a migração roda (public localmente, stockguard no Supabase):
+-- impede que objetos de outro schema sejam usados no lugar das tabelas (função SECURITY DEFINER)
+-- e mantém o trigger de itens funcionando para qualquer sessão.
+DO $$
+BEGIN
+  EXECUTE format('ALTER FUNCTION sg_apply_stock_delta(uuid, uuid, numeric, uuid) SET search_path = %I, pg_temp', current_schema());
+  EXECUTE format('ALTER FUNCTION sg_guard_movement_item() SET search_path = %I, pg_temp', current_schema());
+END;
+$$;
 
 -- -----------------------------------------------------------------------------
 -- 7. Privilégios do papel da API (aplicados se o papel existir)

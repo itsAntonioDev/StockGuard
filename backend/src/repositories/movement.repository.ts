@@ -40,6 +40,20 @@ export const movementListSelect = {
   createdBy: userRef,
   checkedBy: userRef,
   _count: { select: { items: true, discrepancies: true } },
+  // Primeiro item: resumo para a listagem (produto, quantidade, origem → destino).
+  items: {
+    take: 1,
+    orderBy: { id: 'asc' },
+    select: {
+      expectedQuantity: true,
+      quantity: true,
+      unit: true,
+      direction: true,
+      product: { select: { id: true, internalCode: true, name: true } },
+      fromLocation: { select: { code: true } },
+      toLocation: { select: { code: true } },
+    },
+  },
 } satisfies Prisma.StockMovementSelect;
 
 /**

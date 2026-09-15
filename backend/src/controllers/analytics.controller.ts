@@ -7,11 +7,14 @@ import {
   discrepancyReport,
   fetchDiscrepancyReport,
   fetchMovementReport,
+  fetchProductivityReport,
   fetchStockReport,
   movementReport,
+  productivityReport,
   stockReport,
   type ReportDefinition,
 } from '../services/report.service.js';
+import { getTimezone } from '../services/settings.service.js';
 import { toCsv } from '../utils/csv.js';
 import { getActor, requestContext } from '../utils/request-context.js';
 import type {
@@ -19,13 +22,14 @@ import type {
   DiscrepancyReportQuery,
   MovementReportQuery,
   ProductivityQuery,
+  ProductivityReportQuery,
   ReportSummaryQuery,
   StockReportQuery,
 } from '../validators/analytics.schemas.js';
 
 export const dashboard = (request: FastifyRequest<{ Querystring: DashboardQuery }>) => getDashboard(request.query);
 
-export const productivity = (request: FastifyRequest<{ Querystring: ProductivityQuery }>) => getProductivity(getActor(request), request.query);
+export const productivityIndicators = (request: FastifyRequest<{ Querystring: ProductivityQuery }>) => getProductivity(getActor(request), request.query);
 
 export const reportSummary = (request: FastifyRequest<{ Querystring: ReportSummaryQuery }>) => getReportSummary(request.query);
 
@@ -64,11 +68,14 @@ async function respond<Row, Query extends { format: 'json' | 'csv' }>(
     .send(toCsv(definition.columns, page.items));
 }
 
-export const movements = (request: FastifyRequest<{ Querystring: MovementReportQuery }>, reply: FastifyReply) =>
-  respond(request, reply, request.query, movementReport, fetchMovementReport);
+export const movements = async (request: FastifyRequest<{ Querystring: MovementReportQuery }>, reply: FastifyReply) =>
+  respond(request, reply, request.query, movementReport(await getTimezone()), fetchMovementReport);
 
-export const discrepancies = (request: FastifyRequest<{ Querystring: DiscrepancyReportQuery }>, reply: FastifyReply) =>
-  respond(request, reply, request.query, discrepancyReport, fetchDiscrepancyReport);
+export const discrepancies = async (request: FastifyRequest<{ Querystring: DiscrepancyReportQuery }>, reply: FastifyReply) =>
+  respond(request, reply, request.query, discrepancyReport(await getTimezone()), fetchDiscrepancyReport);
 
-export const stock = (request: FastifyRequest<{ Querystring: StockReportQuery }>, reply: FastifyReply) =>
-  respond(request, reply, request.query, stockReport, fetchStockReport);
+export const stock = async (request: FastifyRequest<{ Querystring: StockReportQuery }>, reply: FastifyReply) =>
+  respond(request, reply, request.query, stockReport(await getTimezone()), fetchStockReport);
+
+export const productivity = (request: FastifyRequest<{ Querystring: ProductivityReportQuery }>, reply: FastifyReply) =>
+  respond(request, reply, request.query, productivityReport, (query) => fetchProductivityReport(getActor(request), query));

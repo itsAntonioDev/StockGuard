@@ -17,6 +17,15 @@ const envSchema = z
     HOST: z.string().min(1).default('127.0.0.1'),
     PORT: z.coerce.number().int().min(1).max(65_535).default(3333),
     DATABASE_URL: z.string().startsWith('postgresql://'),
+    /** Schema das tabelas (public localmente; stockguard no Supabase, fora da API REST pública). */
+    DATABASE_SCHEMA: z
+      .string()
+      .regex(/^[a-z_][a-z0-9_]{0,62}$/u, 'use apenas letras minúsculas, números e _')
+      .default('public'),
+    /** disable (local) | require (TLS sem verificar certificado) | verify (TLS com verificação). */
+    DATABASE_SSL: z.enum(['disable', 'require', 'verify']).default('disable'),
+    /** Certificado da autoridade do provedor (ex.: CA do Supabase) para DATABASE_SSL=verify. */
+    DATABASE_CA_CERT_PATH: z.string().min(1).optional(),
     FRONTEND_ORIGIN: z.url(),
     /**
      * false | true | lista de IPs/CIDRs confiáveis (ex.: 127.0.0.1).
@@ -58,6 +67,9 @@ const envSchema = z
     if (env.NODE_ENV === 'production') {
       if (!env.COOKIE_SECURE) {
         ctx.addIssue({ code: 'custom', path: ['COOKIE_SECURE'], message: 'deve ser true em produção' });
+      }
+      if (env.DATABASE_SSL === 'require') {
+        ctx.addIssue({ code: 'custom', path: ['DATABASE_SSL'], message: 'use verify (com certificado) em produção' });
       }
       if (!env.FRONTEND_ORIGIN.startsWith('https://')) {
         ctx.addIssue({ code: 'custom', path: ['FRONTEND_ORIGIN'], message: 'deve usar HTTPS em produção' });

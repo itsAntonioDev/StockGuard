@@ -1,5 +1,5 @@
--- CreateSchema
-CREATE SCHEMA IF NOT EXISTS "public";
+-- As tabelas são criadas no schema da conexão (DATABASE_SCHEMA): public localmente, stockguard no Supabase.
+-- O schema já existe e pertence ao papel de migração; não é criado aqui.
 
 -- CreateEnum
 CREATE TYPE "AuditResult" AS ENUM ('SUCCESS', 'FAILURE', 'DENIED');

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getEnv } from '../config/env.js';
 import { NotFoundError, ValidationError } from '../lib/errors.js';
 import { getPrisma, type DbClient } from '../lib/prisma.js';
 import type { RequestContext } from '../utils/request-context.js';
@@ -8,7 +9,35 @@ import { writeAudit } from './audit.service.js';
  * Configurações operacionais editáveis pelo administrador.
  * Cada chave tem schema próprio: nada é gravado sem validação.
  */
+export const TIMEZONES = ['America/Noronha', 'America/Sao_Paulo', 'America/Manaus', 'America/Rio_Branco', 'UTC'] as const;
+export type Timezone = (typeof TIMEZONES)[number];
+
 export const SETTING_DEFINITIONS = {
+  'general.companyName': {
+    description: 'Nome da empresa exibido no sistema.',
+    schema: z.string().trim().min(2).max(120),
+    defaultValue: 'Minha empresa' as string,
+  },
+  'general.timezone': {
+    description: 'Fuso horário usado em datas, relatórios e indicadores.',
+    schema: z.enum(TIMEZONES),
+    defaultValue: 'America/Sao_Paulo' as Timezone,
+  },
+  'general.dateFormat': {
+    description: 'Formato de exibição de datas.',
+    schema: z.enum(['DD/MM/AAAA', 'AAAA-MM-DD']),
+    defaultValue: 'DD/MM/AAAA' as 'DD/MM/AAAA' | 'AAAA-MM-DD',
+  },
+  'general.timeFormat': {
+    description: 'Formato de exibição de horas.',
+    schema: z.enum(['HH:mm', 'hh:mm a']),
+    defaultValue: 'HH:mm' as 'HH:mm' | 'hh:mm a',
+  },
+  'general.rememberFilters': {
+    description: 'Manter o último filtro usado ao sair e voltar para uma página.',
+    schema: z.boolean(),
+    defaultValue: false as boolean,
+  },
   'check.requiredTypes': {
     description: 'Tipos de movimentação que exigem conferência antes de alterar o estoque.',
     schema: z.array(z.enum(['ENTRY', 'EXIT', 'PICKING', 'TRANSFER'])).max(4),
@@ -55,6 +84,25 @@ export async function getSetting<K extends SettingKey>(key: K, db: DbClient = ge
   const parsed = definition.schema.safeParse(row.value);
   // Valor corrompido no banco nunca derruba a operação: volta ao padrão seguro.
   return (parsed.success ? parsed.data : definition.defaultValue) as SettingValue<K>;
+}
+
+/** Fuso configurado pelo administrador; sem configuração, usa APP_TIMEZONE do ambiente. */
+export async function getTimezone(db: DbClient = getPrisma()): Promise<string> {
+  const row = await db.systemSetting.findUnique({ where: { key: 'general.timezone' } });
+  const parsed = row ? SETTING_DEFINITIONS['general.timezone'].schema.safeParse(row.value) : null;
+  return parsed?.success ? parsed.data : getEnv().APP_TIMEZONE;
+}
+
+/** Preferências de exibição (sem dados sensíveis) — disponíveis para qualquer usuário autenticado. */
+export async function getGeneralSettings() {
+  const [companyName, timezone, dateFormat, timeFormat, rememberFilters] = await Promise.all([
+    getSetting('general.companyName'),
+    getTimezone(),
+    getSetting('general.dateFormat'),
+    getSetting('general.timeFormat'),
+    getSetting('general.rememberFilters'),
+  ]);
+  return { companyName, timezone, dateFormat, timeFormat, rememberFilters };
 }
 
 export async function listSettings() {

@@ -1,11 +1,10 @@
-import { getEnv } from '../config/env.js';
 import { ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { getPrisma, Prisma } from '../lib/prisma.js';
 import type { Actor } from '../types/fastify.js';
 import { MOVEMENT_TYPE_LABEL } from '../utils/labels.js';
 import type { ProductivityQuery } from '../validators/analytics.schemas.js';
 import { resolvePeriod, toFloat, toInt, type Period } from './analytics-period.js';
-import { getSetting } from './settings.service.js';
+import { getSetting, getTimezone } from './settings.service.js';
 
 /**
  * Produtividade orientada a MELHORIA DE PROCESSO:
@@ -208,7 +207,7 @@ async function bySector(filters: Filters, minSample: number) {
 }
 
 async function weeklyEvolution(filters: Filters) {
-  const tz = getEnv().APP_TIMEZONE;
+  const tz = await getTimezone();
   const rows = await getPrisma().$queryRaw<Array<{ week: string; sectorCode: string; attempts: bigint; matches: bigint }>>`
     SELECT to_char(date_trunc('week', a."createdAt" AT TIME ZONE ${tz}), 'YYYY-MM-DD') AS "week",
            s."code" AS "sectorCode",
