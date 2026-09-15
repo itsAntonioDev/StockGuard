@@ -43,14 +43,24 @@ export interface Database {
  */
 export function createDatabase(connectionString: string, env: Env = getEnv()): Database {
   const schema = env.DATABASE_SCHEMA;
-  const pool = new pg.Pool({ connectionString: driverConnectionString(connectionString), ssl: sslConfig(env), max: 10 });
+  const pool = new pg.Pool({
+    connectionString: driverConnectionString(connectionString),
+    ssl: sslConfig(env),
+    max: 10,
+    // Banco remoto (ex.: Supabase em outra região): conexão TLS inicial pode levar alguns segundos.
+    connectionTimeoutMillis: 10_000,
+  });
   pool.on('connect', (client) => {
     // O nome do schema é validado no env (apenas [a-z0-9_]).
     client.query(`SET search_path TO "${schema}"`).catch((error: unknown) => pool.emit('error', error, client));
   });
   pool.on('error', (error) => process.emitWarning(`Erro no pool do PostgreSQL: ${error.message}`));
 
-  const prisma = new PrismaClient({ adapter: new PrismaPg(pool, { schema }) });
+  const prisma = new PrismaClient({
+    adapter: new PrismaPg(pool, { schema }),
+    // Padrão do Prisma é 2 s para obter conexão; insuficiente na primeira conexão com banco distante.
+    transactionOptions: { maxWait: 10_000 },
+  });
   return {
     prisma,
     close: async () => {
