@@ -15,7 +15,7 @@ export function TrendChart({
   data,
   xKey,
   series,
-  height = 260,
+  height = 240,
   formatX,
   valueSuffix = '',
 }: {
@@ -29,25 +29,26 @@ export function TrendChart({
   return (
     <div style={{ width: '100%', height }}>
       <ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-          <CartesianGrid stroke="#e5e5e5" strokeDasharray="3 3" vertical={false} />
+        <LineChart data={data} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+          <CartesianGrid stroke="#f0f0f0" vertical={false} />
           <XAxis dataKey={xKey} tickFormatter={formatX} tick={{ fontSize: 11, fill: '#737373' }} tickLine={false} axisLine={{ stroke: '#e5e5e5' }} />
-          <YAxis tick={{ fontSize: 11, fill: '#737373' }} tickLine={false} axisLine={false} width={40} allowDecimals={false} />
+          <YAxis tick={{ fontSize: 11, fill: '#737373' }} tickLine={false} axisLine={false} width={44} allowDecimals={false} />
           <Tooltip
             labelFormatter={(value) => (formatX ? formatX(String(value)) : String(value))}
             formatter={(value) => `${formatNumber(typeof value === 'number' ? value : Number(value), 2)}${valueSuffix}`}
             contentStyle={{ fontSize: 12, borderRadius: 6 }}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend verticalAlign="top" align="right" height={28} iconSize={8} wrapperStyle={{ fontSize: 11, color: '#525252' }} />
           {series.map((line, index) => (
             <Line
               key={line.key}
-              type="monotone"
+              type="linear"
               dataKey={line.key}
               name={line.label}
               stroke={line.color ?? CHART_COLORS[index % CHART_COLORS.length]}
-              strokeWidth={2}
-              dot={false}
+              strokeWidth={1.5}
+              dot={{ r: 3, strokeWidth: 1.5, fill: '#fff' }}
+              activeDot={{ r: 4 }}
               connectNulls
             />
           ))}
@@ -60,19 +61,17 @@ export function TrendChart({
 export function BarList({ items, formatValue = (value) => formatNumber(value) }: { items: Array<{ key: string; label: string; value: number; hint?: string }>; formatValue?: (value: number) => string }) {
   const max = Math.max(1, ...items.map((item) => item.value));
   return (
-    <ul className="space-y-3">
+    <ul className="space-y-2.5">
       {items.map((item) => (
-        <li key={item.key}>
-          <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-            <span className="truncate text-neutral-800">{item.label}</span>
-            <span className="shrink-0 font-medium text-neutral-900">
-              {formatValue(item.value)}
-              {item.hint && <span className="ml-1 text-xs font-normal text-neutral-500">{item.hint}</span>}
-            </span>
+        <li key={item.key} className="grid grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-3 text-xs">
+          <span className="truncate text-neutral-700">{item.label}</span>
+          <div className="h-2.5 rounded-sm bg-neutral-100">
+            <div className="h-2.5 rounded-sm bg-neutral-700" style={{ width: `${(item.value / max) * 100}%` }} />
           </div>
-          <div className="h-2 rounded-full bg-neutral-100">
-            <div className="h-2 rounded-full bg-neutral-800" style={{ width: `${(item.value / max) * 100}%` }} />
-          </div>
+          <span className="w-10 text-right font-medium text-neutral-900">
+            {formatValue(item.value)}
+            {item.hint && <span className="ml-1 font-normal text-neutral-500">{item.hint}</span>}
+          </span>
         </li>
       ))}
     </ul>

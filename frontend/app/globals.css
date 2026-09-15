@@ -13,10 +13,51 @@ body {
   font-family: var(--font-sans);
 }
 
-/* Foco sempre visível: operação por teclado e leitores de código de barras. */
-:focus-visible {
+/* Foco sempre visível: operação por teclado e leitores de código de barras.
+   Campos de formulário usam a própria borda (ver components/ui/form.tsx). */
+:focus-visible:not(input, select, textarea) {
   outline: 2px solid #171717;
   outline-offset: 2px;
+}
+
+/* Com a navegação por cursor do navegador ligada (F7), um cursor de texto aparece em qualquer
+   ponto da página. O site não controla esse recurso, mas deixa o cursor visível apenas onde se digita. */
+body {
+  caret-color: transparent;
+  cursor: default;
+}
+
+input,
+textarea,
+select,
+[contenteditable='true'] {
+  caret-color: auto;
+}
+
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='submit'], [type='button']),
+textarea {
+  cursor: text;
+}
+
+a,
+button,
+[role='button'],
+[role='switch'],
+[role='menuitem'],
+label[for],
+select,
+input[type='checkbox'],
+input[type='radio'] {
+  cursor: pointer;
+}
+
+/* Rótulos, botões e menus não entram na seleção de texto ao clicar; dados das tabelas continuam copiáveis. */
+nav,
+button,
+label,
+th,
+[role='menu'] {
+  user-select: none;
 }
 
 /* Campos numéricos sem setas (evita alteração acidental com a roda do mouse). */

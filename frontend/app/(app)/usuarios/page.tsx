@@ -1,17 +1,19 @@
 'use client';
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Plus, Search } from 'lucide-react';
+import { Copy, Plus } from 'lucide-react';
 import { useState } from 'react';
+import { ActionsMenu } from '@/components/ui/actions-menu';
 import { Button } from '@/components/ui/button';
-import { Badge, Card, Notice, PageHeader } from '@/components/ui/display';
+import { Badge, Notice, PageHeader } from '@/components/ui/display';
 import { ErrorMessage } from '@/components/ui/error-message';
 import { Checkbox, Field, Input, Select } from '@/components/ui/form';
 import { Modal } from '@/components/ui/modal';
+import { SearchInput } from '@/components/ui/search-input';
 import { DataTable, Pagination } from '@/components/ui/table';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useRememberedState } from '@/hooks/use-remembered-state';
 import { usePermissions } from '@/hooks/use-session';
-import { formatDateTime } from '@/lib/format';
 import { adminService, locationService } from '@/services';
 import type { UserRow } from '@/types/api';
 
@@ -27,13 +29,22 @@ interface UserForm {
 
 const OPERATIONAL = ['OPERATOR', 'CHECKER'];
 
+const isLocked = (user: UserRow) => Boolean(user.lockedUntil && new Date(user.lockedUntil) > new Date());
+
+function UserStatus({ user }: { user: UserRow }) {
+  if (!user.active) return <Badge>Inativo</Badge>;
+  if (isLocked(user)) return <Badge tone="danger">Bloqueado</Badge>;
+  if (user.mustChangePassword) return <Badge tone="warning">Troca de senha pendente</Badge>;
+  return <Badge tone="success">Ativo</Badge>;
+}
+
 export default function UsersPage() {
   const { me, can } = usePermissions();
   const queryClient = useQueryClient();
   const canManageAll = can('users.manage');
   const canManage = canManageAll || can('users.manage_operators');
-  const [search, setSearch] = useState('');
-  const [roleId, setRoleId] = useState('');
+  const [search, setSearch] = useRememberedState('usuarios:busca', '');
+  const [roleId, setRoleId] = useRememberedState('usuarios:perfil', '');
   const [page, setPage] = useState(1);
   const [form, setForm] = useState<UserForm | null>(null);
   const [secret, setSecret] = useState<{ name: string; password: string } | null>(null);
@@ -70,69 +81,58 @@ export default function UsersPage() {
   const actionError = resetPassword.error ?? unlock.error ?? resetMfa.error;
 
   const manageable = (user: UserRow) => canManage && user.id !== me?.user.id && (canManageAll || OPERATIONAL.includes(user.role.code));
+  const openEdit = (row: UserRow) => {
+    save.reset();
+    setForm({ id: row.id, name: row.name, email: row.email, roleId: row.role.id, sectorId: row.sector?.id ?? '', trainingStartedAt: row.trainingStartedAt?.slice(0, 10) ?? '', active: row.active });
+  };
 
   return (
     <>
       <PageHeader
-        title="Gerenciamento de usuários"
-        description={canManageAll ? 'Usuários, perfis e acessos' : 'Operadores e conferentes da sua equipe'}
+        title="Gerenciamento de Usuários"
+        description={canManageAll ? 'Configure os usuários e suas permissões' : 'Operadores e conferentes da sua equipe'}
         actions={canManage && <Button icon={<Plus className="size-4" />} onClick={() => { save.reset(); setForm({ name: '', email: '', roleId: '', sectorId: '', trainingStartedAt: '', active: true }); }}>Novo usuário</Button>}
       />
-      <Card>
-        <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_220px]">
-          <Field label="Buscar">
-            {(id) => (
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" aria-hidden />
-                <Input id={id} className="pl-9" placeholder="Nome ou e-mail" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
-              </div>
-            )}
-          </Field>
-          <Field label="Perfil">
-            {(id) => (
-              <Select id={id} value={roleId} onChange={(event) => { setRoleId(event.target.value); setPage(1); }}>
-                <option value="">Todos os perfis</option>
-                {roles.data?.items.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
-              </Select>
-            )}
-          </Field>
-        </div>
-        {(users.error || actionError) && <div className="mb-4"><ErrorMessage error={users.error ?? actionError} /></div>}
-        <DataTable
-          loading={users.isFetching}
-          rows={users.data?.items}
-          rowKey={(row) => row.id}
-          columns={[
-            { key: 'name', header: 'Nome', cell: (row) => <span className="font-medium">{row.name}</span> },
-            { key: 'email', header: 'E-mail', cell: (row) => row.email },
-            { key: 'role', header: 'Perfil', cell: (row) => row.role.name },
-            { key: 'sector', header: 'Setor', cell: (row) => row.sector?.name ?? '—' },
-            { key: 'mfa', header: 'MFA', cell: (row) => (row.mfaEnabled ? <Badge tone="success">Ativo</Badge> : <Badge>Não</Badge>) },
-            {
-              key: 'status',
-              header: 'Status',
-              cell: (row) =>
-                !row.active ? <Badge>Inativo</Badge> : row.lockedUntil && new Date(row.lockedUntil) > new Date() ? <Badge tone="danger">Bloqueado</Badge> : row.mustChangePassword ? <Badge tone="warning">Troca de senha pendente</Badge> : <Badge tone="success">Ativo</Badge>,
-            },
-            { key: 'last', header: 'Último acesso', cell: (row) => formatDateTime(row.lastLoginAt) },
-            {
-              key: 'actions',
-              header: '',
-              className: 'text-right',
-              cell: (row) =>
-                manageable(row) && (
-                  <div className="flex flex-wrap justify-end gap-1">
-                    <Button size="sm" variant="secondary" onClick={() => { save.reset(); setForm({ id: row.id, name: row.name, email: row.email, roleId: row.role.id, sectorId: row.sector?.id ?? '', trainingStartedAt: row.trainingStartedAt?.slice(0, 10) ?? '', active: row.active }); }}>Editar</Button>
-                    <Button size="sm" variant="ghost" onClick={() => resetPassword.mutate(row)}>Redefinir senha</Button>
-                    {row.lockedUntil && new Date(row.lockedUntil) > new Date() && <Button size="sm" variant="ghost" onClick={() => unlock.mutate(row)}>Desbloquear</Button>}
-                    {canManageAll && row.mfaEnabled && <Button size="sm" variant="ghost" onClick={() => resetMfa.mutate(row)}>Redefinir MFA</Button>}
-                  </div>
-                ),
-            },
-          ]}
-        />
-        {users.data && <Pagination page={users.data.page} totalPages={users.data.totalPages} total={users.data.total} pageSize={users.data.pageSize} onChange={setPage} />}
-      </Card>
+
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <SearchInput className="w-full sm:w-80" aria-label="Buscar usuários" placeholder="Buscar por nome, e-mail ou usuário..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
+        <Select className="w-full sm:w-44" aria-label="Perfil" value={roleId} onChange={(event) => { setRoleId(event.target.value); setPage(1); }}>
+          <option value="">Todos os perfis</option>
+          {roles.data?.items.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+        </Select>
+      </div>
+
+      {(users.error || actionError) && <div className="mb-4"><ErrorMessage error={users.error ?? actionError} /></div>}
+      <DataTable
+        loading={users.isFetching}
+        rows={users.data?.items}
+        rowKey={(row) => row.id}
+        emptyTitle="Nenhum usuário encontrado"
+        columns={[
+          { key: 'name', header: 'Nome', cell: (row) => row.name },
+          { key: 'email', header: 'Usuário', cell: (row) => <span className="text-neutral-600">{row.email}</span> },
+          { key: 'role', header: 'Perfil', cell: (row) => row.role.name },
+          { key: 'sector', header: 'Setor', cell: (row) => row.sector?.name ?? '—' },
+          { key: 'status', header: 'Status', cell: (row) => <UserStatus user={row} /> },
+          {
+            key: 'actions',
+            header: 'Ações',
+            className: 'w-16 text-right',
+            cell: (row) =>
+              manageable(row) ? (
+                <ActionsMenu
+                  items={[
+                    { label: 'Editar', onClick: () => openEdit(row) },
+                    { label: 'Redefinir senha', onClick: () => resetPassword.mutate(row) },
+                    { label: 'Desbloquear', onClick: () => unlock.mutate(row), hidden: !isLocked(row) },
+                    { label: 'Redefinir MFA', onClick: () => resetMfa.mutate(row), hidden: !(canManageAll && row.mfaEnabled), tone: 'danger' },
+                  ]}
+                />
+              ) : null,
+          },
+        ]}
+      />
+      {users.data && <Pagination page={users.data.page} totalPages={users.data.totalPages} total={users.data.total} pageSize={users.data.pageSize} onChange={setPage} itemLabel="usuários" />}
 
       {form && (
         <Modal

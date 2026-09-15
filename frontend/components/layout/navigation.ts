@@ -1,17 +1,12 @@
 import {
   ArrowLeftRight,
-  Bell,
-  ClipboardList,
+  ChartColumn,
+  ClipboardCheck,
   FileText,
-  Gauge,
   House,
-  LayoutDashboard,
   MapPin,
   Package,
-  ScanBarcode,
-  ScrollText,
   Settings,
-  ShieldCheck,
   TriangleAlert,
   Users,
   type LucideIcon,
@@ -23,22 +18,24 @@ export interface NavItem {
   icon: LucideIcon;
   /** Basta uma das permissões. Vazio = qualquer usuário autenticado. */
   permissions: string[];
+  /** Rotas que também deixam o item destacado (telas acessadas a partir dele). */
+  match?: string[];
 }
 
+/** Menu conforme o protótipo. Alertas, Inventários, Perfis e Auditoria são acessados a partir destes itens. */
 export const NAV_ITEMS: NavItem[] = [
-  { href: '/', label: 'Início', icon: House, permissions: [] },
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, permissions: ['dashboard.read'] },
-  { href: '/conferencia', label: 'Conferência', icon: ScanBarcode, permissions: ['checks.perform'] },
-  { href: '/movimentacoes', label: 'Movimentações', icon: ArrowLeftRight, permissions: ['movements.read.own', 'movements.read.all'] },
-  { href: '/inventarios', label: 'Inventários', icon: ClipboardList, permissions: ['inventory.count', 'inventory.manage', 'inventory.approve'] },
-  { href: '/divergencias', label: 'Divergências', icon: TriangleAlert, permissions: ['discrepancies.read.own', 'discrepancies.read.all'] },
-  { href: '/alertas', label: 'Alertas', icon: Bell, permissions: ['alerts.read'] },
+  { href: '/', label: 'Início', icon: House, permissions: [], match: ['/', '/dashboard', '/alertas', '/minha-conta'] },
   { href: '/produtos', label: 'Produtos', icon: Package, permissions: ['products.read'] },
   { href: '/enderecos', label: 'Endereços', icon: MapPin, permissions: ['locations.read'] },
-  { href: '/produtividade', label: 'Produtividade', icon: Gauge, permissions: ['productivity.read.all', 'productivity.read.own'] },
+  { href: '/movimentacoes', label: 'Movimentações', icon: ArrowLeftRight, permissions: ['movements.read.own', 'movements.read.all'] },
+  { href: '/conferencia', label: 'Conferência', icon: ClipboardCheck, permissions: ['checks.perform'], match: ['/conferencia', '/inventarios'] },
+  { href: '/divergencias', label: 'Divergências', icon: TriangleAlert, permissions: ['discrepancies.read.own', 'discrepancies.read.all'] },
   { href: '/relatorios', label: 'Relatórios', icon: FileText, permissions: ['reports.read'] },
+  { href: '/produtividade', label: 'Produtividade', icon: ChartColumn, permissions: ['productivity.read.all', 'productivity.read.own'] },
   { href: '/usuarios', label: 'Usuários', icon: Users, permissions: ['users.read'] },
-  { href: '/perfis', label: 'Perfis e permissões', icon: ShieldCheck, permissions: ['roles.manage'] },
-  { href: '/configuracoes', label: 'Configurações', icon: Settings, permissions: ['settings.manage'] },
-  { href: '/auditoria', label: 'Auditoria', icon: ScrollText, permissions: ['audit.read'] },
+  { href: '/configuracoes', label: 'Configurações', icon: Settings, permissions: ['settings.manage', 'roles.manage', 'audit.read'], match: ['/configuracoes', '/perfis', '/auditoria'] },
 ];
+
+export function isNavItemActive(item: NavItem, pathname: string): boolean {
+  return (item.match ?? [item.href]).some((path) => (path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(`${path}/`)));
+}

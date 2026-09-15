@@ -25,11 +25,11 @@ export function DataTable<Row>({ columns, rows, rowKey, loading, emptyTitle = 'N
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+      <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
         <thead>
-          <tr className="border-b border-neutral-200 text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <tr className="border-b border-neutral-200">
             {columns.map((column) => (
-              <th key={column.key} scope="col" className={cn('px-3 py-2.5 font-medium', column.className)}>
+              <th key={column.key} scope="col" className={cn('px-3 py-2.5 text-xs font-medium text-neutral-500', column.className)}>
                 {column.header}
               </th>
             ))}
@@ -37,7 +37,7 @@ export function DataTable<Row>({ columns, rows, rowKey, loading, emptyTitle = 'N
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={rowKey(row)} className="border-b border-neutral-100 last:border-0 hover:bg-neutral-50">
+            <tr key={rowKey(row)} className="border-b border-neutral-100 last:border-0 hover:bg-neutral-50/70">
               {columns.map((column) => (
                 <td key={column.key} className={cn('px-3 py-3 align-middle text-neutral-800', column.className)}>
                   {column.cell(row)}
@@ -51,38 +51,66 @@ export function DataTable<Row>({ columns, rows, rowKey, loading, emptyTitle = 'N
   );
 }
 
-export function Pagination({ page, totalPages, total, pageSize, onChange }: { page: number; totalPages: number; total: number; pageSize: number; onChange: (page: number) => void }) {
+/** Números visíveis: primeiras páginas, reticências e a última (ex.: 1 2 3 4 5 … 12). */
+function pageNumbers(page: number, totalPages: number): Array<number | 'gap'> {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const start = Math.max(1, Math.min(page - 2, totalPages - 5));
+  const numbers: Array<number | 'gap'> = Array.from({ length: 5 }, (_, index) => start + index);
+  if (start > 1) numbers.unshift(1, 'gap');
+  if (start + 4 < totalPages) numbers.push('gap', totalPages);
+  return numbers;
+}
+
+const PAGE_BUTTON = 'inline-flex size-7 items-center justify-center rounded-md text-xs disabled:opacity-40';
+
+export function Pagination({
+  page,
+  totalPages,
+  total,
+  pageSize,
+  onChange,
+  itemLabel = 'registros',
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  pageSize: number;
+  onChange: (page: number) => void;
+  itemLabel?: string;
+}) {
   if (total === 0) return null;
   const first = (page - 1) * pageSize + 1;
   const last = Math.min(page * pageSize, total);
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-neutral-500">
       <span>
-        Mostrando {first} a {last} de {total}
+        Mostrando {first} a {last} de {total} {itemLabel}
       </span>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => onChange(page - 1)}
-          disabled={page <= 1}
-          className="inline-flex size-8 items-center justify-center rounded-md border border-neutral-200 bg-white hover:bg-neutral-100 disabled:opacity-40"
-          aria-label="Página anterior"
-        >
+      <nav className="flex items-center gap-1" aria-label="Paginação">
+        <button type="button" onClick={() => onChange(page - 1)} disabled={page <= 1} className={cn(PAGE_BUTTON, 'hover:bg-neutral-100')} aria-label="Página anterior">
           <ChevronLeft className="size-4" />
         </button>
-        <span className="px-2 font-medium text-neutral-700">
-          {page} / {totalPages}
-        </span>
-        <button
-          type="button"
-          onClick={() => onChange(page + 1)}
-          disabled={page >= totalPages}
-          className="inline-flex size-8 items-center justify-center rounded-md border border-neutral-200 bg-white hover:bg-neutral-100 disabled:opacity-40"
-          aria-label="Próxima página"
-        >
+        {pageNumbers(page, totalPages).map((entry, index) =>
+          entry === 'gap' ? (
+            <span key={`gap-${index}`} className="px-1">
+              …
+            </span>
+          ) : (
+            <button
+              key={entry}
+              type="button"
+              onClick={() => onChange(entry)}
+              aria-current={entry === page ? 'page' : undefined}
+              className={cn(PAGE_BUTTON, entry === page ? 'bg-neutral-900 font-medium text-white' : 'text-neutral-700 hover:bg-neutral-100')}
+            >
+              {entry}
+            </button>
+          ),
+        )}
+        <button type="button" onClick={() => onChange(page + 1)} disabled={page >= totalPages} className={cn(PAGE_BUTTON, 'hover:bg-neutral-100')} aria-label="Próxima página">
           <ChevronRight className="size-4" />
         </button>
-      </div>
+      </nav>
     </div>
   );
 }

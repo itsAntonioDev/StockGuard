@@ -87,6 +87,14 @@ export interface PermissionRow {
   description: string;
 }
 
+export interface GeneralSettings {
+  companyName: string;
+  timezone: string;
+  dateFormat: 'DD/MM/AAAA' | 'AAAA-MM-DD';
+  timeFormat: 'HH:mm' | 'hh:mm a';
+  rememberFilters: boolean;
+}
+
 export interface SettingRow {
   key: string;
   description: string;
@@ -235,6 +243,16 @@ export interface MovementListItem {
   createdBy: Ref;
   checkedBy: Ref | null;
   _count: { items: number; discrepancies: number };
+  /** Primeiro item da movimentação (resumo para a listagem). */
+  items: Array<{
+    expectedQuantity: number;
+    quantity: number | null;
+    unit: Unit;
+    direction: number;
+    product: { id: string; internalCode: string; name: string };
+    fromLocation: { code: string } | null;
+    toLocation: { code: string } | null;
+  }>;
 }
 
 export interface MovementLocationRef {

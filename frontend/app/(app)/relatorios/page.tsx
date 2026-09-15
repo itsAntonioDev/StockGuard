@@ -1,40 +1,45 @@
 'use client';
 
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowLeftRight, Boxes, Download, Eye, TriangleAlert } from 'lucide-react';
+import { ArrowLeftRight, ChartColumn, FileSpreadsheet, TriangleAlert, Warehouse } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { BarList } from '@/components/charts';
-import { PeriodSelect, startOfDayIso } from '@/components/filters';
+import { OptionSelect, PeriodSelect, periodStart } from '@/components/filters';
 import { Button } from '@/components/ui/button';
-import { Card, PageHeader, Spinner, StatCard } from '@/components/ui/display';
+import { Card, FilterBar, PageHeader, Spinner } from '@/components/ui/display';
 import { ErrorMessage } from '@/components/ui/error-message';
-import { Field, Select } from '@/components/ui/form';
 import { DataTable, Pagination } from '@/components/ui/table';
+import { useOperatorOptions, useProductOptions, useSectorOptions } from '@/hooks/use-filter-options';
 import { usePermissions } from '@/hooks/use-session';
 import { downloadFile } from '@/lib/api';
+import { cn } from '@/lib/cn';
 import { formatCurrency, formatDateOnly, formatDateTime, formatNumber, formatPercent } from '@/lib/format';
-import { analyticsService, locationService } from '@/services';
+import { analyticsService, type ReportKey } from '@/services';
 import type { ReportRow } from '@/types/api';
-
-type ReportKey = 'movements' | 'discrepancies' | 'stock';
 
 const REPORTS: Record<ReportKey, { title: string; description: string; icon: ReactNode; columns: Record<string, string> }> = {
   movements: {
-    title: 'Movimentações de estoque',
-    description: 'Itens movimentados no período',
+    title: 'Movimentações de Estoque',
+    description: 'Detalhes de todas as movimentações',
     icon: <ArrowLeftRight className="size-5" aria-hidden />,
     columns: { number: 'Nº', type: 'Tipo', status: 'Status', createdAt: 'Criada em', productCode: 'Código', productName: 'Produto', lot: 'Lote', expectedQuantity: 'Qtd. solicitada', confirmedQuantity: 'Qtd. confirmada', unit: 'Unid.', from: 'Origem', to: 'Destino', createdBy: 'Registrado por', checkedBy: 'Conferido por' },
   },
   discrepancies: {
     title: 'Divergências',
-    description: 'Divergências registradas e sua análise',
+    description: 'Relatório de divergências encontradas',
     icon: <TriangleAlert className="size-5" aria-hidden />,
     columns: { number: 'Nº', type: 'Tipo', status: 'Status', origin: 'Origem', createdAt: 'Registrada em', productCode: 'Código', productName: 'Produto', location: 'Endereço', sector: 'Setor', expectedQuantity: 'Esperada', foundQuantity: 'Encontrada', estimatedValue: 'Valor estimado', probableCause: 'Causa provável' },
   },
+  productivity: {
+    title: 'Produtividade',
+    description: 'Desempenho da operação por tipo e setor',
+    icon: <ChartColumn className="size-5" aria-hidden />,
+    columns: { grouping: 'Agrupamento', group: 'Grupo', volume: 'Volume', sufficientSample: 'Amostra suficiente', averageMinutes: 'Min./operação', averageMinutesPerItem: 'Min./item', accuracy: 'Precisão (%)', rework: 'Retrabalho/operação', resolutionHours: 'Resolução (h)' },
+  },
   stock: {
-    title: 'Estoque atual',
-    description: 'Saldo por produto, endereço e lote',
-    icon: <Boxes className="size-5" aria-hidden />,
+    title: 'Estoque Atual',
+    description: 'Saldo atual por produto',
+    icon: <Warehouse className="size-5" aria-hidden />,
     columns: { productCode: 'Código', productName: 'Produto', category: 'Categoria', location: 'Endereço', sector: 'Setor', lot: 'Lote', expiresAt: 'Validade', quantity: 'Quantidade', unit: 'Unid.', productTotal: 'Saldo total', minStock: 'Mínimo', belowMinimum: 'Abaixo do mínimo' },
   },
 };
@@ -45,90 +50,138 @@ function renderCell(key: string, value: ReportRow[string]) {
   if (key === 'expiresAt') return formatDateOnly(String(value));
   if (key.endsWith('At')) return formatDateTime(String(value));
   if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
-  if (typeof value === 'number') return key === 'number' ? value : formatNumber(value);
+  if (typeof value === 'number') return key === 'number' ? value : formatNumber(value, 2);
   return value;
 }
 
+interface Filters {
+  days: string;
+  productId: string;
+  userId: string;
+  sectorId: string;
+}
+
+const INITIAL_FILTERS: Filters = { days: '30', productId: '', userId: '', sectorId: '' };
+
 export default function ReportsPage() {
   const { can } = usePermissions();
-  const [days, setDays] = useState('30');
-  const [sectorId, setSectorId] = useState('');
+  const products = useProductOptions();
+  const operators = useOperatorOptions();
+  const sectors = useSectorOptions();
+  const [draft, setDraft] = useState<Filters>(INITIAL_FILTERS);
+  const [applied, setApplied] = useState<Filters>(INITIAL_FILTERS);
   const [active, setActive] = useState<ReportKey>('discrepancies');
   const [page, setPage] = useState(1);
-  const from = useMemo(() => startOfDayIso(Number(days)), [days]);
+  const from = useMemo(() => periodStart(applied.days), [applied.days]);
 
-  const sectors = useQuery({ queryKey: ['sectors'], queryFn: () => locationService.sectors(), enabled: can('locations.read') });
-  const summary = useQuery({ queryKey: ['report-summary', from, sectorId], queryFn: () => analyticsService.reportSummary({ from, sectorId }) });
-  const filters = active === 'stock' ? { sectorId } : { from, sectorId };
+  /** Cada relatório recebe apenas os filtros que fazem sentido para ele (produtividade nunca é filtrada por pessoa). */
+  const reportQuery = (key: ReportKey) => {
+    switch (key) {
+      case 'movements':
+        return { from, productId: applied.productId, userId: applied.userId, sectorId: applied.sectorId };
+      case 'discrepancies':
+        return { from, productId: applied.productId, operationUserId: applied.userId, sectorId: applied.sectorId };
+      case 'productivity':
+        return { from, sectorId: applied.sectorId };
+      case 'stock':
+        return { productId: applied.productId, sectorId: applied.sectorId };
+    }
+  };
+
+  const summary = useQuery({ queryKey: ['report-summary', from, applied.sectorId], queryFn: () => analyticsService.reportSummary({ from, sectorId: applied.sectorId }) });
   const preview = useQuery({
-    queryKey: ['report', active, filters, page],
-    queryFn: () => analyticsService.report(active, { ...filters, page, pageSize: 20 }),
+    queryKey: ['report', active, applied, page],
+    queryFn: () => analyticsService.report(active, { ...reportQuery(active), page, pageSize: 20 }),
     placeholderData: keepPreviousData,
   });
-  const exportCsv = useMutation({ mutationFn: (key: ReportKey) => downloadFile(`/reports/${key}`, { format: 'csv', ...(key === 'stock' ? { sectorId } : { from, sectorId }) }, `${key}.csv`) });
+  const exportCsv = useMutation({ mutationFn: (key: ReportKey) => downloadFile(`/reports/${key}`, { format: 'csv', ...reportQuery(key) }, `${key}.csv`) });
 
   const columns = Object.entries(REPORTS[active].columns).map(([key, header]) => ({ key, header, cell: (row: ReportRow) => renderCell(key, row[key] ?? null) }));
+  const update = (patch: Partial<Filters>) => setDraft((current) => ({ ...current, ...patch }));
 
   return (
     <>
-      <PageHeader
-        title="Relatórios"
-        description="Visualize e exporte relatórios. Exportações ficam registradas na auditoria."
-        actions={
-          <div className="flex flex-wrap gap-3">
-            <PeriodSelect value={days} onChange={(value) => { setDays(value); setPage(1); }} />
-            {sectors.data && (
-              <Field label="Setor">
-                {(id) => (
-                  <Select id={id} value={sectorId} onChange={(event) => { setSectorId(event.target.value); setPage(1); }}>
-                    <option value="">Todos</option>
-                    {sectors.data.items.map((sector) => <option key={sector.id} value={sector.id}>{sector.warehouse.code} · {sector.code} — {sector.name}</option>)}
-                  </Select>
-                )}
-              </Field>
-            )}
-          </div>
-        }
-      />
+      <PageHeader title="Relatórios" description="Visualize e exporte relatórios personalizados" />
 
-      <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-3">
+      <FilterBar>
+        <PeriodSelect allowAll value={draft.days} onChange={(days) => update({ days })} />
+        <OptionSelect label="Produto" value={draft.productId} options={products} onChange={(productId) => update({ productId })} />
+        {can('users.read') && <OptionSelect label="Operador" value={draft.userId} options={operators} onChange={(userId) => update({ userId })} />}
+        <OptionSelect label="Setor" value={draft.sectorId} options={sectors} onChange={(sectorId) => update({ sectorId })} />
+        <Button
+          onClick={() => {
+            setApplied(draft);
+            setPage(1);
+          }}
+        >
+          Gerar relatório
+        </Button>
+      </FilterBar>
+
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {(Object.keys(REPORTS) as ReportKey[]).map((key) => (
-            <article key={key} className={`flex flex-col gap-3 rounded-lg border bg-white p-5 ${active === key ? 'border-neutral-900' : 'border-neutral-200'}`}>
-              <div className="flex items-start gap-3">
-                <span className="rounded-md bg-neutral-100 p-2">{REPORTS[key].icon}</span>
-                <div>
-                  <h2 className="text-sm font-semibold">{REPORTS[key].title}</h2>
-                  <p className="text-xs text-neutral-500">{REPORTS[key].description}</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="secondary" icon={<Eye className="size-4" />} onClick={() => { setActive(key); setPage(1); }}>Visualizar</Button>
-                {can('reports.export') && <Button size="sm" icon={<Download className="size-4" />} loading={exportCsv.isPending && exportCsv.variables === key} onClick={() => exportCsv.mutate(key)}>CSV</Button>}
-              </div>
+            <article key={key} className={cn('flex flex-col justify-between gap-4 rounded-lg border bg-white p-4', active === key ? 'border-neutral-900' : 'border-neutral-200')}>
+              <button type="button" onClick={() => { setActive(key); setPage(1); }} className="flex items-start gap-3 text-left" aria-pressed={active === key}>
+                <span className="rounded-md border border-neutral-200 p-2 text-neutral-700">{REPORTS[key].icon}</span>
+                <span>
+                  <span className="block text-[13px] font-semibold text-neutral-900">{REPORTS[key].title}</span>
+                  <span className="block text-xs text-neutral-500">{REPORTS[key].description}</span>
+                </span>
+              </button>
+              {can('reports.export') && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="self-start"
+                  icon={<FileSpreadsheet className="size-4" />}
+                  loading={exportCsv.isPending && exportCsv.variables === key}
+                  onClick={() => exportCsv.mutate(key)}
+                >
+                  CSV
+                </Button>
+              )}
             </article>
           ))}
         </div>
         {exportCsv.error && <ErrorMessage error={exportCsv.error} />}
 
-        <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-          <Card title="Divergências por tipo">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+          <Card title="Relatório em destaque">
+            <h3 className="mb-4 text-[13px] font-semibold text-neutral-900">Divergências por tipo</h3>
             {summary.isPending && <Spinner />}
             {summary.error && <ErrorMessage error={summary.error} />}
-            {summary.data && (summary.data.discrepanciesByType.length === 0 ? (
-              <p className="text-sm text-neutral-500">Nenhuma divergência no período.</p>
-            ) : (
-              <BarList items={summary.data.discrepanciesByType.map((entry) => ({ key: entry.type, label: `${entry.label} (${formatNumber(entry.share, 1)}%)`, value: entry.count }))} />
-            ))}
+            {summary.data &&
+              (summary.data.discrepanciesByType.length === 0 ? (
+                <p className="text-xs text-neutral-500">Nenhuma divergência no período.</p>
+              ) : (
+                <BarList
+                  items={summary.data.discrepanciesByType.map((entry) => ({ key: entry.type, label: `${entry.label} (${formatNumber(entry.share, 0)}%)`, value: entry.count }))}
+                />
+              ))}
           </Card>
-          <div className="grid gap-4">
-            <StatCard label="Total de movimentações" value={formatNumber(summary.data?.metrics.confirmedMovements)} />
-            <StatCard label="Total de divergências" value={formatNumber(summary.data?.metrics.discrepancies)} />
-            <StatCard label="Taxa de divergência" value={formatPercent(summary.data?.metrics.discrepancyRate)} hint={summary.data ? `${summary.data.metrics.operationsWithDiscrepancy} de ${summary.data.metrics.analyzedOperations} operações conferidas` : undefined} />
-          </div>
+          <Card title="Resumo do período">
+            <dl className="space-y-4">
+              <div>
+                <dt className="text-xs text-neutral-500">Total de movimentações</dt>
+                <dd className="mt-0.5 text-xl font-semibold">{formatNumber(summary.data?.metrics.confirmedMovements)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-neutral-500">Total de divergências</dt>
+                <dd className="mt-0.5 text-xl font-semibold">{formatNumber(summary.data?.metrics.discrepancies)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-neutral-500">Taxa de divergência</dt>
+                <dd className="mt-0.5 text-xl font-semibold">{formatPercent(summary.data?.metrics.discrepancyRate)}</dd>
+              </div>
+            </dl>
+          </Card>
         </div>
 
-        <Card title={REPORTS[active].title} description={active === 'stock' ? 'Posição atual (o período não se aplica).' : undefined}>
+        <Card
+          title={REPORTS[active].title}
+          description={active === 'stock' ? 'Posição atual (o período não se aplica).' : active === 'productivity' ? 'Indicadores agregados da operação — nunca por pessoa.' : 'Exportações ficam registradas na auditoria.'}
+        >
           {preview.error && <ErrorMessage error={preview.error} />}
           <DataTable loading={preview.isFetching} rows={preview.data?.items} rowKey={(row) => JSON.stringify(row).slice(0, 200)} columns={columns} />
           {preview.data && <Pagination page={preview.data.page} totalPages={preview.data.totalPages} total={preview.data.total} pageSize={preview.data.pageSize} onChange={setPage} />}

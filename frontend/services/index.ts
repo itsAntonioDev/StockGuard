@@ -12,6 +12,7 @@ import type {
   Dashboard,
   DiscrepancyDetail,
   DiscrepancyRow,
+  GeneralSettings,
   InventoryDetail,
   InventoryItemRow,
   InventoryRow,
@@ -128,11 +129,17 @@ export const inventoryService = {
   cancel: (id: string, reason: string) => api<InventoryDetail>(`/inventories/${id}/cancel`, { method: 'POST', body: { reason } }),
 };
 
+export type ReportKey = 'movements' | 'discrepancies' | 'productivity' | 'stock';
+
 export const analyticsService = {
   dashboard: (query: QueryParams) => api<Dashboard>('/analytics/dashboard', { query }),
   productivity: (query: QueryParams) => api<Productivity>('/analytics/productivity', { query }),
   reportSummary: (query: QueryParams) => api<ReportSummary>('/reports/summary', { query }),
-  report: (report: 'movements' | 'discrepancies' | 'stock', query: QueryParams) => api<Paginated<ReportRow>>(`/reports/${report}`, { query }),
+  report: (report: ReportKey, query: QueryParams) => api<Paginated<ReportRow>>(`/reports/${report}`, { query }),
+};
+
+export const settingsService = {
+  general: () => api<GeneralSettings>('/settings/general'),
 };
 
 export const adminService = {
