@@ -87,8 +87,9 @@ export default function CheckPage() {
         setResult({ kind: 'product', product, movements: pending.items });
         return;
       }
+      // Número de operação tem poucos dígitos; códigos de barras (13 dígitos) não são números de operação.
       const number = value.replace(/^MOV-?/iu, '');
-      if (/^\d+$/u.test(number)) {
+      if (/^\d{1,9}$/u.test(number)) {
         const [found] = (await movementService.list({ number, pageSize: 1 })).items;
         if (found) {
           router.push(`/conferencia/${found.id}`);

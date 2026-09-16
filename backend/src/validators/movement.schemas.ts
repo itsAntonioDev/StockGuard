@@ -71,7 +71,9 @@ export const movementListQuerySchema = paginationSchema.extend({
   warehouseId: z.uuid().optional(),
   productId: z.uuid().optional(),
   createdById: z.uuid().optional(),
-  number: z.coerce.number().int().positive().optional(),
+  // Limite do inteiro de 32 bits da coluna: valores maiores (ex.: código de barras lido por engano)
+  // viram erro de validação com mensagem clara, em vez de estourar no banco.
+  number: z.coerce.number().int().positive().max(2_147_483_647, 'Número de operação inválido.').optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
 });

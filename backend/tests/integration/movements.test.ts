@@ -281,3 +281,16 @@ describe('integridade no banco (defesa em profundidade)', () => {
     expect(verification.checked).toBeGreaterThan(2);
   });
 });
+
+describe('busca por número', () => {
+  it('recusa número maior que o limite da coluna (ex.: código de barras lido por engano)', async () => {
+    const response = await operator.get('/movements?number=7891000100103');
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+  });
+
+  it('aceita número válido', async () => {
+    expect((await operator.get('/movements?number=1')).statusCode).toBe(200);
+  });
+});
