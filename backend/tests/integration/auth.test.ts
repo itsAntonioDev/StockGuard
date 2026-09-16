@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { base32Decode, hotp, totpStep } from '../../src/auth/totp.js';
+import { trustedDeviceCookieName } from '../../src/auth/trusted-device.js';
+import { getEnv } from '../../src/config/env.js';
 import { getPrisma } from '../../src/lib/prisma.js';
 import {
   ApiClient,
@@ -177,5 +179,63 @@ describe('proteções de requisição', () => {
     expect(body.error.requestId).toBeTruthy();
     expect(response.body).not.toMatch(/stack|prisma|at \w+ \(/iu);
     expect(response.headers['x-request-id']).toBe(body.error.requestId);
+  });
+});
+
+describe('dispositivo lembrado (MFA)', () => {
+  const loginWithTrusted = (email: string, password: string, trusted?: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      headers: { origin: getEnv().FRONTEND_ORIGIN },
+      ...(trusted ? { cookies: { [trustedDeviceCookieName()]: trusted } } : {}),
+      payload: { email, password },
+    });
+
+  async function rememberDevice(user: Awaited<ReturnType<typeof createUser>>): Promise<string> {
+    const first = await new ApiClient(app).post('/auth/login', { email: user.email, password: PASSWORD });
+    expect(first.json()).toMatchObject({ pendingStep: 'MFA_VERIFY' });
+    const client = new ApiClient(app, sessionCookie(first));
+    const verify = await client.post('/auth/mfa/verify', { code: currentTotp(user.totpSecret!), rememberDevice: true });
+    expect(verify.statusCode).toBe(200);
+    const cookie = verify.cookies.find((entry) => entry.name === trustedDeviceCookieName());
+    expect(cookie?.httpOnly).toBe(true);
+    expect(String(cookie?.sameSite).toLowerCase()).toBe('strict');
+    return cookie!.value;
+  }
+
+  it('dispensa o código no mesmo navegador, mas nunca a senha', async () => {
+    const admin = await createUser('ADMIN');
+    const trusted = await rememberDevice(admin);
+
+    const again = await loginWithTrusted(admin.email, PASSWORD, trusted);
+    expect(again.json()).toMatchObject({ pendingStep: null });
+
+    const wrongPassword = await loginWithTrusted(admin.email, 'Senha-Errada#2026', trusted);
+    expect(wrongPassword.statusCode).toBe(401);
+  });
+
+  it('não vale para outra conta nem com assinatura adulterada', async () => {
+    const admin = await createUser('ADMIN');
+    const other = await createUser('ADMIN');
+    const trusted = await rememberDevice(admin);
+
+    expect((await loginWithTrusted(other.email, PASSWORD, trusted)).json()).toMatchObject({ pendingStep: 'MFA_VERIFY' });
+
+    const [version, payload] = trusted.split('.');
+    const forged = `${version}.${payload}.assinatura-invalida`;
+    expect((await loginWithTrusted(admin.email, PASSWORD, forged)).json()).toMatchObject({ pendingStep: 'MFA_VERIFY' });
+  });
+
+  it('troca de senha invalida os dispositivos lembrados', async () => {
+    const admin = await createUser('ADMIN');
+    const trusted = await rememberDevice(admin);
+    const client = await login(app, admin);
+
+    const changed = await client.post('/auth/change-password', { currentPassword: PASSWORD, newPassword: 'Nova-Senha#2026-Forte' });
+    expect(changed.statusCode).toBe(200);
+
+    const after = await loginWithTrusted(admin.email, 'Nova-Senha#2026-Forte', trusted);
+    expect(after.json()).toMatchObject({ pendingStep: 'MFA_VERIFY' });
   });
 });

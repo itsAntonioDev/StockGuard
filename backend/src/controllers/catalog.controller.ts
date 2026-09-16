@@ -59,3 +59,13 @@ export async function createCategory(request: FastifyRequest<{ Body: CategoryCre
 export async function updateCategory(request: FastifyRequest<IdParams & { Body: CategoryUpdateInput }>) {
   return catalogService.updateCategory(request.params.id, request.body, requestContext(request));
 }
+
+export async function deleteProduct(request: FastifyRequest<IdParams>, reply: FastifyReply) {
+  await catalogService.deleteProduct(request.params.id, requestContext(request));
+  return reply.status(204).send();
+}
+
+export async function deleteLot(request: FastifyRequest<IdParams>, reply: FastifyReply) {
+  await catalogService.deleteLot(request.params.id, requestContext(request));
+  return reply.status(204).send();
+}

@@ -8,6 +8,8 @@ export const loginBodySchema = z.object({
 
 export const mfaCodeBodySchema = z.object({
   code: z.string().trim().regex(/^\d{6}$/u, 'O código deve ter 6 dígitos.'),
+  /** Dispensa o código neste navegador pelos próximos dias (MFA_REMEMBER_DAYS). */
+  rememberDevice: z.boolean().default(false),
 });
 
 export const changePasswordBodySchema = z.object({

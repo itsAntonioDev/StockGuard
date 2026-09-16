@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { trustedDeviceCookieName, trustedDeviceCookieOptions, type TrustedDeviceToken } from '../auth/trusted-device.js';
 import { AuthenticationError } from '../lib/errors.js';
 import * as authService from '../services/auth.service.js';
 import {
@@ -24,8 +25,23 @@ function clearSessionCookie(reply: FastifyReply) {
   reply.clearCookie(sessionCookieName(), options);
 }
 
+/** Comprovante de "lembrar este dispositivo": só dispensa o código MFA, nunca a senha. */
+function setTrustedDeviceCookie(reply: FastifyReply, trustedDevice: TrustedDeviceToken | null) {
+  if (trustedDevice) reply.setCookie(trustedDeviceCookieName(), trustedDevice.value, trustedDeviceCookieOptions(trustedDevice.expiresAt));
+}
+
+function clearTrustedDeviceCookie(reply: FastifyReply) {
+  const { expires: _ignored, ...options } = trustedDeviceCookieOptions(new Date(0));
+  reply.clearCookie(trustedDeviceCookieName(), options);
+}
+
 export async function login(request: FastifyRequest<{ Body: LoginBody }>, reply: FastifyReply) {
-  const result = await authService.login(request.body.email, request.body.password, requestContext(request));
+  const result = await authService.login(
+    request.body.email,
+    request.body.password,
+    requestContext(request),
+    request.cookies[trustedDeviceCookieName()],
+  );
   setSessionCookie(reply, result.token, result.expiresAt);
   return { pendingStep: result.pendingStep, expiresAt: result.expiresAt };
 }
@@ -61,15 +77,23 @@ export async function startMfaSetup(request: FastifyRequest) {
 }
 
 export async function confirmMfaSetup(request: FastifyRequest<{ Body: MfaCodeBody }>, reply: FastifyReply) {
-  const grant = await authService.confirmMfaSetup(currentSession(request), request.body.code, requestContext(request));
+  const grant = await authService.confirmMfaSetup(currentSession(request), request.body.code, requestContext(request), request.body.rememberDevice);
   setSessionCookie(reply, grant.token, grant.expiresAt);
+  setTrustedDeviceCookie(reply, grant.trustedDevice);
   return { ok: true };
 }
 
 export async function verifyMfa(request: FastifyRequest<{ Body: MfaCodeBody }>, reply: FastifyReply) {
-  const grant = await authService.verifyMfa(currentSession(request), request.body.code, requestContext(request));
+  const grant = await authService.verifyMfa(currentSession(request), request.body.code, requestContext(request), request.body.rememberDevice);
   setSessionCookie(reply, grant.token, grant.expiresAt);
+  setTrustedDeviceCookie(reply, grant.trustedDevice);
   return { ok: true };
+}
+
+/** "Esquecer este dispositivo": passa a exigir o código MFA neste navegador de novo. */
+export async function forgetTrustedDevice(request: FastifyRequest, reply: FastifyReply) {
+  clearTrustedDeviceCookie(reply);
+  return reply.status(204).send();
 }
 
 export async function changePassword(request: FastifyRequest<{ Body: ChangePasswordBody }>, reply: FastifyReply) {
@@ -80,6 +104,8 @@ export async function changePassword(request: FastifyRequest<{ Body: ChangePassw
     requestContext(request),
   );
   setSessionCookie(reply, grant.token, grant.expiresAt);
+  // A troca de senha invalida os dispositivos lembrados; o cookie antigo sai do navegador.
+  clearTrustedDeviceCookie(reply);
   return { ok: true };
 }
 

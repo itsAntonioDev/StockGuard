@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
+import { BarcodeScannerButton } from '@/components/barcode-scanner';
 import { Button } from '@/components/ui/button';
 import { ErrorMessage } from '@/components/ui/error-message';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/ui/form';
@@ -108,7 +109,12 @@ export function ProductFormModal({ open, product, onClose, onSaved }: Props) {
           {(id) => <Input id={id} value={form.internalCode} disabled={editing} maxLength={40} onChange={(event) => set('internalCode', event.target.value)} />}
         </Field>
         <Field label="Código de barras">
-          {(id) => <Input id={id} value={form.barcode} maxLength={64} onChange={(event) => set('barcode', event.target.value)} />}
+          {(id) => (
+            <div className="flex gap-2">
+              <Input id={id} value={form.barcode} maxLength={64} onChange={(event) => set('barcode', event.target.value)} />
+              <BarcodeScannerButton label="Ler" onDetected={(barcode) => set('barcode', barcode)} />
+            </div>
+          )}
         </Field>
         <Field label="Nome" required className="sm:col-span-2">
           {(id) => <Input id={id} value={form.name} maxLength={160} onChange={(event) => set('name', event.target.value)} />}

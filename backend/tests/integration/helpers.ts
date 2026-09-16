@@ -135,6 +135,10 @@ export class ApiClient {
   put(url: string, body?: unknown) {
     return this.request('PUT', url, body);
   }
+
+  delete(url: string) {
+    return this.request('DELETE', url);
+  }
 }
 
 export async function login(app: TestApp, user: TestUser): Promise<ApiClient> {

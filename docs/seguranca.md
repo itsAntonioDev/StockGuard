@@ -24,6 +24,7 @@ Nenhum sistema é invulnerável. Este documento descreve os controles implementa
 - Cookie `sg_session` (produção: `__Host-sg_session`) com `HttpOnly`, `SameSite=Strict`, `Path=/` e `Secure` em produção.
 - Métodos que alteram dados exigem `Origin` igual a `FRONTEND_ORIGIN` (ou `Sec-Fetch-Site: same-origin`); recusas são auditadas.
 - Nenhum token é armazenado em `localStorage` ou exposto em URL.
+- "Lembrar este dispositivo" (`sg_trusted`, produção `__Host-sg_trusted`, validade `MFA_REMEMBER_DAYS`): comprovante assinado com HMAC que dispensa **apenas** o código MFA — a senha é exigida em todo login. A assinatura inclui uma impressão digital da conta (`passwordChangedAt` + semente MFA cifrada), então trocar/redefinir a senha ou redefinir o MFA invalida imediatamente todos os dispositivos lembrados. O cookie não guarda segredo nem concede sessão, e `DELETE /auth/trusted-device` o remove.
 
 ## Frontend
 
@@ -31,6 +32,7 @@ Nenhum sistema é invulnerável. Este documento descreve os controles implementa
 - `style-src 'unsafe-inline'` é permitido por causa dos gráficos (atributos `style`); scripts inline continuam bloqueados.
 - Nenhum uso de `dangerouslySetInnerHTML`; mensagens multilinha são exibidas como texto.
 - QR code do MFA gerado localmente (a semente não sai do navegador para terceiros).
+- Leitura de código de barras pela câmera processada no próprio navegador (biblioteca empacotada com o app); nenhuma imagem é enviada a servidores e a câmera é liberada ao fechar a janela. `Permissions-Policy` libera a câmera apenas para a própria origem.
 
 ## Uploads (evidências)
 

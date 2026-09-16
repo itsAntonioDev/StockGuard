@@ -5,6 +5,7 @@ import { ClipboardList, RefreshCw, ScanBarcode } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
+import { BarcodeScannerButton } from '@/components/barcode-scanner';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Spinner } from '@/components/ui/display';
 import { ErrorMessage } from '@/components/ui/error-message';
@@ -64,9 +65,8 @@ export default function CheckPage() {
   const lastItem = last?.items[0];
 
   /** Código do produto → operações pendentes com ele; também aceita o número da operação (ex.: MOV-012). */
-  async function search(event: FormEvent) {
-    event.preventDefault();
-    const value = code.trim();
+  async function runSearch(rawCode: string) {
+    const value = rawCode.trim();
     if (!value) return;
     setResult(null);
     setSearching(true);
@@ -103,6 +103,11 @@ export default function CheckPage() {
     }
   }
 
+  function submitSearch(event: FormEvent) {
+    event.preventDefault();
+    void runSearch(code);
+  }
+
   const matches = result?.kind === 'product' ? result.movements : null;
 
   return (
@@ -123,7 +128,7 @@ export default function CheckPage() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <Card>
-          <form onSubmit={search} className="flex flex-col items-center px-2 py-8 text-center">
+          <form onSubmit={submitSearch} className="flex flex-col items-center px-2 py-8 text-center">
             <span className="flex size-20 items-center justify-center rounded-full border border-neutral-200">
               <ScanBarcode className="size-9 text-neutral-800" strokeWidth={1.5} aria-hidden />
             </span>
@@ -142,6 +147,16 @@ export default function CheckPage() {
                 Buscar
               </Button>
             </div>
+            <BarcodeScannerButton
+              className="mt-3"
+              variant="ghost"
+              size="sm"
+              label="Ler com a câmera"
+              onDetected={(scanned) => {
+                setCode(scanned);
+                void runSearch(scanned);
+              }}
+            />
             <div className="mt-4 w-full max-w-sm text-left">
               {result?.kind === 'none' && <p className="text-xs text-red-700">Nenhum produto ou operação encontrado com esse código.</p>}
               {result?.kind === 'error' && <ErrorMessage error={result.error} />}

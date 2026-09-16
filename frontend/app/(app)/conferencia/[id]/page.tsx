@@ -5,6 +5,7 @@ import { Barcode, Check, CircleCheck, CircleX, MapPin, Package } from 'lucide-re
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { BarcodeScannerButton } from '@/components/barcode-scanner';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Badge, Card, Notice, PageHeader, Spinner } from '@/components/ui/display';
 import { ErrorMessage } from '@/components/ui/error-message';
@@ -193,6 +194,7 @@ export default function CheckPage() {
                       <span className="flex size-20 items-center justify-center rounded-full border-2 border-neutral-200"><Barcode className="size-10" aria-hidden /></span>
                       <p className="text-center font-medium">Escaneie o código de barras ou digite o código do produto</p>
                       <Input ref={inputRef} className="h-12 max-w-md text-center text-lg" placeholder="Digite o código ou escaneie…" value={scan.productCode} onChange={(event) => setScan({ ...scan, productCode: event.target.value })} autoComplete="off" />
+                      <BarcodeScannerButton variant="ghost" size="sm" label="Ler com a câmera" onDetected={(scanned) => setScan({ ...scan, productCode: scanned })} />
                     </div>
                   )}
                   {step === 1 && (
@@ -215,7 +217,12 @@ export default function CheckPage() {
                   {step === 2 && (
                     <div className="mx-auto max-w-md space-y-4 py-2">
                       <Field label="Endereço (leia a etiqueta)" required>
-                        {(fieldId) => <Input ref={inputRef} id={fieldId} className="h-12 text-center font-mono text-lg" placeholder="A-01-02-03" value={scan.locationCode} onChange={(event) => setScan({ ...scan, locationCode: event.target.value })} autoComplete="off" />}
+                        {(fieldId) => (
+                          <div className="flex gap-2">
+                            <Input ref={inputRef} id={fieldId} className="h-12 text-center font-mono text-lg" placeholder="A-01-02-03" value={scan.locationCode} onChange={(event) => setScan({ ...scan, locationCode: event.target.value })} autoComplete="off" />
+                            <BarcodeScannerButton label="Ler" onDetected={(scanned) => setScan({ ...scan, locationCode: scanned })} />
+                          </div>
+                        )}
                       </Field>
                       {data.type === 'TRANSFER' && (
                         <Field label="Endereço de destino" required>{(fieldId) => <Input id={fieldId} className="h-12 text-center font-mono text-lg" value={scan.destinationCode} onChange={(event) => setScan({ ...scan, destinationCode: event.target.value })} autoComplete="off" />}</Field>

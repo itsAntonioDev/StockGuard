@@ -1,15 +1,16 @@
 'use client';
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { ProductFormModal } from '@/components/products/product-form-modal';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, DescriptionList, PageHeader, Spinner } from '@/components/ui/display';
 import { ErrorMessage } from '@/components/ui/error-message';
 import { Field, Input } from '@/components/ui/form';
+import { Modal } from '@/components/ui/modal';
 import { ActiveBadge, LocationStatusBadge } from '@/components/ui/status';
 import { DataTable, Pagination } from '@/components/ui/table';
 import { usePermissions } from '@/hooks/use-session';
@@ -19,9 +20,12 @@ import { catalogService } from '@/services';
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const { can } = usePermissions();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [lotToDelete, setLotToDelete] = useState<{ id: string; code: string } | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [lot, setLot] = useState({ code: '', expiresAt: '' });
 
@@ -30,6 +34,23 @@ export default function ProductDetailPage() {
     queryKey: ['product-history', id, historyPage],
     queryFn: () => catalogService.history(id, { page: historyPage, pageSize: 15 }),
     placeholderData: keepPreviousData,
+  });
+
+  // Só conclui para cadastro sem histórico; com movimentações o servidor recusa e explica.
+  const removeProduct = useMutation({
+    mutationFn: () => catalogService.deleteProduct(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['products'] });
+      router.push('/produtos');
+    },
+  });
+
+  const removeLot = useMutation({
+    mutationFn: (lotId: string) => catalogService.deleteLot(lotId),
+    onSuccess: async () => {
+      setLotToDelete(null);
+      await queryClient.invalidateQueries({ queryKey: ['product', id] });
+    },
   });
 
   const createLot = useMutation({
@@ -49,7 +70,14 @@ export default function ProductDetailPage() {
       <PageHeader
         title={data.name}
         description={`Código ${data.internalCode}${data.barcode ? ` · Código de barras ${data.barcode}` : ''}`}
-        actions={can('products.manage') && <Button variant="secondary" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>Editar</Button>}
+        actions={
+          can('products.manage') && (
+            <>
+              <Button variant="secondary" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>Editar</Button>
+              <Button variant="secondary" className="text-red-700" icon={<Trash2 className="size-4" />} onClick={() => { removeProduct.reset(); setConfirmDelete(true); }}>Excluir</Button>
+            </>
+          )
+        }
       />
 
       <div className="space-y-6">
@@ -104,6 +132,17 @@ export default function ProductDetailPage() {
                 { key: 'code', header: 'Lote', cell: (row) => <span className="font-mono">{row.code}</span> },
                 { key: 'expires', header: 'Validade', cell: (row) => formatDateOnly(row.expiresAt) },
                 { key: 'created', header: 'Cadastrado em', cell: (row) => formatDateTime(row.createdAt) },
+                {
+                  key: 'actions',
+                  header: 'Ações',
+                  className: 'text-right',
+                  cell: (row) =>
+                    can('products.manage') ? (
+                      <Button variant="ghost" size="sm" className="text-red-700" icon={<Trash2 className="size-3.5" />} onClick={() => { removeLot.reset(); setLotToDelete({ id: row.id, code: row.code }); }}>
+                        Excluir
+                      </Button>
+                    ) : null,
+                },
               ]}
             />
           </Card>
@@ -131,6 +170,40 @@ export default function ProductDetailPage() {
       </div>
 
       {editing && <ProductFormModal open product={data} onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />}
+
+      {confirmDelete && (
+        <Modal
+          open
+          title={`Excluir ${data.name}?`}
+          description="A exclusão só é possível enquanto o produto não tiver histórico. Para tirar de uso um produto já movimentado, desative-o na edição."
+          onClose={() => setConfirmDelete(false)}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Cancelar</Button>
+              <Button variant="danger" loading={removeProduct.isPending} onClick={() => removeProduct.mutate()}>Excluir produto</Button>
+            </>
+          }
+        >
+          {removeProduct.error ? <ErrorMessage error={removeProduct.error} /> : <p className="text-[13px] text-neutral-700">Esta ação não pode ser desfeita e fica registrada na auditoria.</p>}
+        </Modal>
+      )}
+
+      {lotToDelete && (
+        <Modal
+          open
+          title={`Excluir o lote ${lotToDelete.code}?`}
+          description="Permitido apenas para lotes que nunca foram usados em operações."
+          onClose={() => setLotToDelete(null)}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setLotToDelete(null)}>Cancelar</Button>
+              <Button variant="danger" loading={removeLot.isPending} onClick={() => removeLot.mutate(lotToDelete.id)}>Excluir lote</Button>
+            </>
+          }
+        >
+          {removeLot.error ? <ErrorMessage error={removeLot.error} /> : <p className="text-[13px] text-neutral-700">Esta ação não pode ser desfeita e fica registrada na auditoria.</p>}
+        </Modal>
+      )}
     </>
   );
 }

@@ -283,3 +283,85 @@ export async function updateCategory(categoryId: string, input: CategoryUpdateIn
     return category;
   });
 }
+
+/** Vínculos que tornam um cadastro parte do histórico — e por isso não excluível. */
+async function productHistoryLinks(tx: DbClient, productId: string) {
+  const [balances, movementItems, ledgerEntries, inventoryItems, discrepancies] = await Promise.all([
+    tx.stockBalance.count({ where: { productId } }),
+    tx.stockMovementItem.count({ where: { productId } }),
+    tx.stockLedgerEntry.count({ where: { productId } }),
+    tx.inventoryCountItem.count({ where: { productId } }),
+    tx.discrepancy.count({ where: { productId } }),
+  ]);
+  return { balances, movementItems, ledgerEntries, inventoryItems, discrepancies };
+}
+
+async function lotHistoryLinks(tx: DbClient, lotId: string) {
+  const [balances, movementItems, ledgerEntries, inventoryItems, discrepancies] = await Promise.all([
+    tx.stockBalance.count({ where: { lotId } }),
+    tx.stockMovementItem.count({ where: { lotId } }),
+    tx.stockLedgerEntry.count({ where: { lotId } }),
+    tx.inventoryCountItem.count({ where: { lotId } }),
+    tx.discrepancy.count({ where: { lotId } }),
+  ]);
+  return { balances, movementItems, ledgerEntries, inventoryItems, discrepancies };
+}
+
+const hasHistory = (links: Record<string, number>) => Object.values(links).some((count) => count > 0);
+
+/**
+ * Exclusão definitiva do produto — só para cadastro criado por engano.
+ * Com qualquer histórico (saldo, movimentação, inventário ou divergência) a exclusão
+ * é recusada: apagar corromperia o histórico do estoque. Nesse caso, desative o produto.
+ */
+export async function deleteProduct(productId: string, context: RequestContext) {
+  const prisma = getPrisma();
+  await prisma.$transaction(async (tx) => {
+    const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, internalCode: true, name: true } });
+    if (!product) throw new NotFoundError('Produto não encontrado.');
+
+    const links = await productHistoryLinks(tx, productId);
+    if (hasHistory(links)) {
+      throw new BusinessRuleError(
+        'PRODUCT_HAS_HISTORY',
+        'Este produto já tem histórico no estoque (movimentações, saldo, inventário ou divergências) e não pode ser excluído. Desative-o para tirá-lo de uso mantendo o histórico.',
+        links,
+      );
+    }
+
+    // Alertas são derivados do cadastro (ex.: estoque abaixo do mínimo) e saem junto.
+    await tx.alert.deleteMany({ where: { productId } });
+    await tx.lot.deleteMany({ where: { productId } });
+    await tx.product.delete({ where: { id: productId } });
+    await writeAudit(tx, context, {
+      action: 'products.delete',
+      result: 'SUCCESS',
+      entityType: 'Product',
+      entityId: productId,
+      metadata: { before: { internalCode: product.internalCode, name: product.name } },
+    });
+  });
+}
+
+/** Exclusão do lote, permitida enquanto ele nunca foi usado em nenhuma operação. */
+export async function deleteLot(lotId: string, context: RequestContext) {
+  const prisma = getPrisma();
+  await prisma.$transaction(async (tx) => {
+    const lot = await tx.lot.findUnique({ where: { id: lotId }, select: { id: true, code: true, productId: true } });
+    if (!lot) throw new NotFoundError('Lote não encontrado.');
+
+    const links = await lotHistoryLinks(tx, lotId);
+    if (hasHistory(links)) {
+      throw new BusinessRuleError('LOT_HAS_HISTORY', 'Este lote já foi usado em operações de estoque e não pode ser excluído.', links);
+    }
+
+    await tx.lot.delete({ where: { id: lotId } });
+    await writeAudit(tx, context, {
+      action: 'lots.delete',
+      result: 'SUCCESS',
+      entityType: 'Lot',
+      entityId: lotId,
+      metadata: { productId: lot.productId, code: lot.code },
+    });
+  });
+}

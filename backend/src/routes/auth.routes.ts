@@ -44,6 +44,11 @@ export async function authRoutes(app: App, options: { loginRateLimitMax: number 
     schema: { tags, body: changePasswordBodySchema },
   }, controller.changePassword);
 
+  app.delete('/auth/trusted-device', {
+    config: { permissions: [], allowSteps: [...ALL_STEPS] },
+    schema: { tags },
+  }, controller.forgetTrustedDevice);
+
   app.get('/auth/sessions', {
     config: { permissions: [] },
     schema: { tags },

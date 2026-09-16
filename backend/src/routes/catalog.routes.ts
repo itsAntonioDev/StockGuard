@@ -42,6 +42,17 @@ export async function catalogRoutes(app: App) {
     schema: { tags, params: idParamSchema, body: productUpdateSchema },
   }, controller.updateProduct);
 
+  // Exclusão definitiva: o serviço recusa se houver histórico (saldo, movimentações, inventário, divergências).
+  app.delete('/products/:id', {
+    config: { permissions: ['products.manage'] },
+    schema: { tags, params: idParamSchema },
+  }, controller.deleteProduct);
+
+  app.delete('/lots/:id', {
+    config: { permissions: ['products.manage'] },
+    schema: { tags, params: idParamSchema },
+  }, controller.deleteLot);
+
   app.get('/products/:id/history', {
     config: { permissions: ['stock.read'] },
     schema: { tags, params: idParamSchema, querystring: historyQuerySchema },

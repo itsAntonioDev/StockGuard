@@ -22,6 +22,7 @@
     "db:seed": "tsx --env-file-if-exists=.env prisma/seed.ts",
     "db:studio": "prisma studio",
     "openapi": "tsx --env-file-if-exists=.env scripts/export-openapi.ts",
+    "admin:reset-password": "tsx --env-file-if-exists=.env scripts/reset-admin-password.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

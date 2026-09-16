@@ -15,9 +15,9 @@ ProjetoKahalD/
 
 | Módulo | O que faz |
 |---|---|
-| Autenticação | Login com Argon2id, sessões no servidor (cookie HttpOnly), bloqueio progressivo, rate limit, MFA (TOTP) obrigatório para administradores, troca de senha obrigatória no primeiro acesso |
+| Autenticação | Login com Argon2id, sessões no servidor (cookie HttpOnly), bloqueio progressivo, rate limit, MFA (TOTP) obrigatório para administradores, opção de lembrar o dispositivo por 30 dias (dispensa só o código, nunca a senha), troca de senha obrigatória no primeiro acesso |
 | Perfis e permissões | Administrador, Gestor, Operador e Conferente; permissões configuráveis e verificadas no backend em toda rota |
-| Produtos e endereços | Cadastro com lote/validade, unidade, estoque mínimo, custo de referência; armazéns, setores e endereços (inclusive geração em lote) |
+| Produtos e endereços | Cadastro com lote/validade, unidade, estoque mínimo, custo de referência, leitura do código de barras pela câmera e exclusão de cadastros sem histórico; armazéns, setores e endereços (inclusive geração em lote) |
 | Movimentações | Entrada, saída, separação, transferência e ajuste (com aprovação por outra pessoa); idempotência contra duplicidade |
 | Conferência | Fluxo Produto → Quantidade (contagem cega) → Endereço → Confirmação, com mensagens claras de erro e dupla checagem |
 | Inventário | Abertura com congelamento dos endereços, contagem cega, recontagem, divergências automáticas e aprovação segregada |

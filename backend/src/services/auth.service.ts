@@ -2,6 +2,7 @@ import { getEnv } from '../config/env.js';
 import { decryptSecret, encryptSecret, sha256Hex } from '../auth/crypto.js';
 import { getDummyHash, hashPassword, validatePasswordPolicy, verifyPassword } from '../auth/password.js';
 import { buildOtpAuthUri, generateTotpSecret, verifyTotp } from '../auth/totp.js';
+import { isTrustedDevice, issueTrustedDevice, type TrustedDeviceToken } from '../auth/trusted-device.js';
 import { AuthenticationError, BusinessRuleError, ConflictError, ValidationError } from '../lib/errors.js';
 import { getPrisma } from '../lib/prisma.js';
 import type { RequestContext } from '../utils/request-context.js';
@@ -24,7 +25,12 @@ export interface SessionGrant {
   expiresAt: Date;
 }
 
-export async function login(email: string, password: string, context: RequestContext): Promise<SessionGrant & { pendingStep: string | null }> {
+export async function login(
+  email: string,
+  password: string,
+  context: RequestContext,
+  trustedDeviceToken?: string,
+): Promise<SessionGrant & { pendingStep: string | null }> {
   const prisma = getPrisma();
   const normalizedEmail = email.trim().toLowerCase();
   const user = await prisma.user.findUnique({ where: { email: normalizedEmail }, include: { role: true } });
@@ -74,11 +80,16 @@ export async function login(email: string, password: string, context: RequestCon
     throw new AuthenticationError(GENERIC_LOGIN_ERROR, 'INVALID_CREDENTIALS');
   }
 
+  // Dispositivo lembrado dispensa apenas o código MFA — a senha já foi exigida acima.
+  const trustedDevice =
+    user.mfaEnabled &&
+    isTrustedDevice(trustedDeviceToken, { userId: user.id, passwordChangedAt: user.passwordChangedAt, mfaSecretEnc: user.mfaSecretEnc });
+
   return prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now } });
-    const session = await createSession(tx, user.id, context, false);
-    const pendingStep = pendingAuthStep({ mfaEnabled: user.mfaEnabled, mustChangePassword: user.mustChangePassword, role: user.role }, false);
-    await writeAudit(tx, auditBase, { action: 'auth.login', result: 'SUCCESS', entityType: 'Session', entityId: session.sessionId, metadata: { pendingStep } });
+    const session = await createSession(tx, user.id, context, trustedDevice);
+    const pendingStep = pendingAuthStep({ mfaEnabled: user.mfaEnabled, mustChangePassword: user.mustChangePassword, role: user.role }, trustedDevice);
+    await writeAudit(tx, auditBase, { action: 'auth.login', result: 'SUCCESS', entityType: 'Session', entityId: session.sessionId, metadata: { pendingStep, trustedDevice } });
     return { token: session.token, expiresAt: session.expiresAt, pendingStep };
   });
 }
@@ -118,10 +129,18 @@ async function registerMfaFailure(session: ResolvedSession, context: RequestCont
 }
 
 /** Confirma o cadastro do MFA e emite uma nova sessão já verificada. */
-export async function confirmMfaSetup(session: ResolvedSession, code: string, context: RequestContext): Promise<SessionGrant> {
+export async function confirmMfaSetup(
+  session: ResolvedSession,
+  code: string,
+  context: RequestContext,
+  rememberDevice = false,
+): Promise<SessionGrant & { trustedDevice: TrustedDeviceToken | null }> {
   const prisma = getPrisma();
   const env = getEnv();
-  const user = await prisma.user.findUniqueOrThrow({ where: { id: session.user.id }, select: { mfaEnabled: true, mfaPendingSecretEnc: true } });
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: session.user.id },
+    select: { mfaEnabled: true, mfaPendingSecretEnc: true, passwordChangedAt: true },
+  });
   if (user.mfaEnabled) throw new ConflictError('O MFA já está ativo para este usuário.', 'MFA_ALREADY_ENABLED');
   if (!user.mfaPendingSecretEnc) throw new BusinessRuleError('MFA_SETUP_NOT_STARTED', 'Inicie a configuração do MFA antes de confirmar.');
 
@@ -136,15 +155,26 @@ export async function confirmMfaSetup(session: ResolvedSession, code: string, co
     });
     await revokeSession(tx, session.sessionId, 'ROTATED_MFA');
     const next = await createSession(tx, session.user.id, context, true);
-    await writeAudit(tx, context, { action: 'auth.mfa.enabled', result: 'SUCCESS', entityType: 'User', entityId: session.user.id });
-    return { token: next.token, expiresAt: next.expiresAt };
+    const trustedDevice = rememberDevice
+      ? issueTrustedDevice({ userId: session.user.id, passwordChangedAt: user.passwordChangedAt, mfaSecretEnc: user.mfaPendingSecretEnc })
+      : null;
+    await writeAudit(tx, context, { action: 'auth.mfa.enabled', result: 'SUCCESS', entityType: 'User', entityId: session.user.id, metadata: { trustedDevice: trustedDevice !== null } });
+    return { token: next.token, expiresAt: next.expiresAt, trustedDevice };
   });
 }
 
 /** Valida o código MFA do login e rotaciona a sessão (evita fixação de sessão). */
-export async function verifyMfa(session: ResolvedSession, code: string, context: RequestContext): Promise<SessionGrant> {
+export async function verifyMfa(
+  session: ResolvedSession,
+  code: string,
+  context: RequestContext,
+  rememberDevice = false,
+): Promise<SessionGrant & { trustedDevice: TrustedDeviceToken | null }> {
   const prisma = getPrisma();
-  const user = await prisma.user.findUniqueOrThrow({ where: { id: session.user.id }, select: { mfaEnabled: true, mfaSecretEnc: true, mfaLastUsedStep: true } });
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: session.user.id },
+    select: { mfaEnabled: true, mfaSecretEnc: true, mfaLastUsedStep: true, passwordChangedAt: true },
+  });
   if (!user.mfaEnabled || !user.mfaSecretEnc) throw new BusinessRuleError('MFA_NOT_ENABLED', 'O MFA não está ativo para este usuário.');
   if (session.mfaVerified) throw new ConflictError('Esta sessão já foi verificada.', 'MFA_ALREADY_VERIFIED');
 
@@ -160,8 +190,11 @@ export async function verifyMfa(session: ResolvedSession, code: string, context:
     if (claimed.count === 0) throw new ValidationError('Código inválido ou expirado.');
     await revokeSession(tx, session.sessionId, 'ROTATED_MFA');
     const next = await createSession(tx, session.user.id, context, true);
-    await writeAudit(tx, context, { action: 'auth.mfa.verify', result: 'SUCCESS', entityType: 'Session', entityId: next.sessionId });
-    return { token: next.token, expiresAt: next.expiresAt };
+    const trustedDevice = rememberDevice
+      ? issueTrustedDevice({ userId: session.user.id, passwordChangedAt: user.passwordChangedAt, mfaSecretEnc: user.mfaSecretEnc })
+      : null;
+    await writeAudit(tx, context, { action: 'auth.mfa.verify', result: 'SUCCESS', entityType: 'Session', entityId: next.sessionId, metadata: { trustedDevice: trustedDevice !== null } });
+    return { token: next.token, expiresAt: next.expiresAt, trustedDevice };
   });
 }
 

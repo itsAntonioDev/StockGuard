@@ -53,6 +53,8 @@ const envSchema = z
           .map((role) => role.trim().toUpperCase())
           .filter(Boolean),
       ),
+    /** Dias que um navegador pode dispensar o código MFA após 'lembrar este dispositivo' (0 desliga). */
+    MFA_REMEMBER_DAYS: z.coerce.number().int().min(0).max(90).default(30),
     MFA_ENCRYPTION_KEY: key32,
     AUDIT_HMAC_KEY: key32,
     APP_TIMEZONE: z.string().min(1).default('America/Sao_Paulo'),

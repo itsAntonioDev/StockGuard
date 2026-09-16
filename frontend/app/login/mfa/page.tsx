@@ -9,7 +9,7 @@ import { stepRoute } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/display';
 import { ErrorMessage } from '@/components/ui/error-message';
-import { Field, Input } from '@/components/ui/form';
+import { Checkbox, Field, Input } from '@/components/ui/form';
 import { ME_QUERY_KEY, useMe } from '@/hooks/use-session';
 import { authService } from '@/services';
 
@@ -18,6 +18,7 @@ export default function MfaPage() {
   const queryClient = useQueryClient();
   const { data: me, error } = useMe();
   const [code, setCode] = useState('');
+  const [rememberDevice, setRememberDevice] = useState(false);
   const [setup, setSetup] = useState<{ secret: string; qr: string } | null>(null);
 
   useEffect(() => {
@@ -37,7 +38,8 @@ export default function MfaPage() {
   });
 
   const finish = useMutation({
-    mutationFn: () => (me?.pendingStep === 'MFA_SETUP' ? authService.confirmMfaSetup(code) : authService.verifyMfa(code)),
+    mutationFn: () =>
+      me?.pendingStep === 'MFA_SETUP' ? authService.confirmMfaSetup(code, rememberDevice) : authService.verifyMfa(code, rememberDevice),
     onSuccess: async () => {
       setCode('');
       await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
@@ -101,6 +103,12 @@ export default function MfaPage() {
                 />
               )}
             </Field>
+            <Checkbox
+              label="Lembrar este dispositivo por 30 dias"
+              description="Neste navegador o código deixa de ser pedido; a senha continua obrigatória. Use apenas em aparelhos seus."
+              checked={rememberDevice}
+              onChange={(event) => setRememberDevice(event.target.checked)}
+            />
             {finish.error && <ErrorMessage error={finish.error} />}
             <Button type="submit" className="w-full" loading={finish.isPending} disabled={code.length !== 6}>
               {isSetup ? 'Ativar MFA' : 'Verificar'}

@@ -1,6 +1,6 @@
 'use client';
 
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, ScanBarcode } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/display';
 import { ErrorMessage } from '@/components/ui/error-message';
 import { Select } from '@/components/ui/form';
+import { Modal } from '@/components/ui/modal';
 import { SearchInput } from '@/components/ui/search-input';
 import { ActiveBadge } from '@/components/ui/status';
 import { DataTable, Pagination } from '@/components/ui/table';
@@ -18,16 +19,28 @@ import { useRememberedState } from '@/hooks/use-remembered-state';
 import { usePermissions } from '@/hooks/use-session';
 import { formatNumber } from '@/lib/format';
 import { catalogService } from '@/services';
+import type { ProductSummary } from '@/types/api';
 
 export default function ProductsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { can } = usePermissions();
   const [search, setSearch] = useRememberedState('produtos:busca', '');
   // '' = todos · 'true'/'false' = ativo/inativo · 'below' = abaixo do mínimo
   const [status, setStatus] = useRememberedState('produtos:status', '');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
+  const [toDelete, setToDelete] = useState<ProductSummary | null>(null);
   const debouncedSearch = useDebouncedValue(search);
+
+  // O servidor recusa a exclusão de produto com histórico e explica o motivo.
+  const removeProduct = useMutation({
+    mutationFn: (productId: string) => catalogService.deleteProduct(productId),
+    onSuccess: async () => {
+      setToDelete(null);
+      await queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
 
   const query = {
     search: debouncedSearch,
@@ -95,13 +108,37 @@ export default function ProductsPage() {
             key: 'actions',
             header: 'Ações',
             className: 'w-16 text-right',
-            cell: (row) => <ActionsMenu items={[{ label: 'Ver detalhes', href: `/produtos/${row.id}` }]} />,
+            cell: (row) => (
+              <ActionsMenu
+                items={[
+                  { label: 'Ver detalhes', href: `/produtos/${row.id}` },
+                  { label: 'Excluir', tone: 'danger', hidden: !can('products.manage'), onClick: () => { removeProduct.reset(); setToDelete(row); } },
+                ]}
+              />
+            ),
           },
         ]}
       />
       {data && <Pagination page={data.page} totalPages={data.totalPages} total={data.total} pageSize={data.pageSize} onChange={setPage} itemLabel="produtos" />}
 
       {creating && <ProductFormModal open onClose={() => setCreating(false)} onSaved={(product) => router.push(`/produtos/${product.id}`)} />}
+
+      {toDelete && (
+        <Modal
+          open
+          title={`Excluir ${toDelete.name}?`}
+          description="A exclusão só é possível enquanto o produto não tiver histórico. Produtos já movimentados devem ser desativados."
+          onClose={() => setToDelete(null)}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setToDelete(null)}>Cancelar</Button>
+              <Button variant="danger" loading={removeProduct.isPending} onClick={() => removeProduct.mutate(toDelete.id)}>Excluir produto</Button>
+            </>
+          }
+        >
+          {removeProduct.error ? <ErrorMessage error={removeProduct.error} /> : <p className="text-[13px] text-neutral-700">Esta ação não pode ser desfeita e fica registrada na auditoria.</p>}
+        </Modal>
+      )}
     </>
   );
 }
